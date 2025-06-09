@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BDPADrive API Test - BDPADrive</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="/css/style.css" rel="stylesheet">
+</head>
+<body>
+    <%- include('layout', {title: 'API Test'}) %>
+    
+    <div class="container-fluid">
+        <div class="row">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h1>REST API v1 Test Interface</h1>
+                    <nav aria-label="breadcrumb">
+                        <ol class="breadcrumb">
+                            <li class="breadcrumb-item"><a href="/dashboard">Dashboard</a></li>
+                            <li class="breadcrumb-item active" aria-current="page">API Test</li>
+                        </ol>
+                    </nav>
+                </div>
+
+                <div class="row">
+                    <!-- User Management Section -->
+                    <div class="col-md-6 mb-4">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5 class="card-title mb-0">
+                                    <i class="bi bi-person"></i> User Management API
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-3">
+                                    <label for="testUsername" class="form-label">Username:</label>
+                                    <input type="text" class="form-control" id="testUsername" placeholder="Enter username">
+                                </div>
+                                
+                                <div class="btn-group-vertical w-100" role="group">
+                                    <button type="button" class="btn btn-outline-primary" onclick="testGetUser()">
+                                        <i class="bi bi-search"></i> GET User Info
+                                    </button>
+                                    <button type="button" class="btn btn-outline-info" onclick="testGetAllUsers()">
+                                        <i class="bi bi-people"></i> GET All Users
+                                    </button>
+                                    <button type="button" class="btn btn-outline-success" onclick="testCreateUser()">
+                                        <i class="bi bi-person-plus"></i> POST Create User
+                                    </button>
+                                    <button type="button" class="btn btn-outline-warning" onclick="testAuthUser()">
+                                        <i class="bi bi-shield-check"></i> POST Authenticate User
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- File System Section -->
+                    <div class="col-md-6 mb-4">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5 class="card-title mb-0">
+                                    <i class="bi bi-folder"></i> Filesystem API
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-3">
+                                    <label for="testFilePath" class="form-label">File Path:</label>
+                                    <input type="text" class="form-control" id="testFilePath" placeholder="Enter file path">
+                                </div>
+                                
+                                <div class="btn-group-vertical w-100" role="group">
+                                    <button type="button" class="btn btn-outline-primary" onclick="testGetFile()">
+                                        <i class="bi bi-file-earmark"></i> GET File/Folder
+                                    </button>
+                                    <button type="button" class="btn btn-outline-success" onclick="testCreateFile()">
+                                        <i class="bi bi-file-plus"></i> POST Create File
+                                    </button>
+                                    <button type="button" class="btn btn-outline-warning" onclick="testUpdateFile()">
+                                        <i class="bi bi-pencil"></i> PUT Update File
+                                    </button>
+                                    <button type="button" class="btn btn-outline-danger" onclick="testDeleteFile()">
+                                        <i class="bi bi-trash"></i> DELETE File
+                                    </button>
+                                    <button type="button" class="btn btn-outline-info" onclick="testSearchFiles()">
+                                        <i class="bi bi-search"></i> Search Files
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Results Section -->
+                <div class="row">
+                    <div class="col-12">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5 class="card-title mb-0">
+                                    <i class="bi bi-terminal"></i> API Response
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <pre id="apiResults" class="bg-dark text-light p-3 rounded" style="max-height: 400px; overflow-y: auto;">
+Ready to test API endpoints...
+                                </pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // API Testing Functions
+        const apiResults = document.getElementById('apiResults');
+        
+        function displayResult(method, url, response, status) {
+            const timestamp = new Date().toLocaleTimeString();
+            const result = `[${timestamp}] ${method} ${url}
+Status: ${status}
+Response: ${JSON.stringify(response, null, 2)}
+
+---
+`;
+            apiResults.textContent = result + apiResults.textContent;
+        }
+
+        async function makeAPICall(method, url, body = null) {
+            try {
+                const options = {
+                    method,
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                };
+                
+                if (body) {
+                    options.body = JSON.stringify(body);
+                }
+
+                const response = await fetch(url, options);
+                const data = await response.json();
+                
+                displayResult(method, url, data, response.status);
+                return data;
+            } catch (error) {
+                displayResult(method, url, { error: error.message }, 'ERROR');
+                return null;
+            }
+        }
+
+        // User API Tests
+        async function testGetAllUsers() {
+            await makeAPICall('GET', '/api/v1/users');
+        }
+
+        async function testGetUser() {
+            const username = document.getElementById('testUsername').value || 'demo';
+            await makeAPICall('GET', `/api/v1/users/${username}`);
+        }
+
+        async function testCreateUser() {
+            const username = document.getElementById('testUsername').value || 'testuser';
+            await makeAPICall('POST', '/api/v1/users', {
+                username: username,
+                email: `${username}@example.com`,
+                password: 'testpassword123',
+                fullName: 'Test User'
+            });
+        }
+
+        async function testAuthUser() {
+            const username = document.getElementById('testUsername').value || 'demo';
+            await makeAPICall('POST', `/api/v1/users/${username}/auth`, {
+                password: 'password123'
+            });
+        }
+
+        // Filesystem API Tests
+        async function testGetFile() {
+            const username = document.getElementById('testUsername').value || 'demo';
+            const filePath = document.getElementById('testFilePath').value || '';
+            const url = filePath 
+                ? `/api/v1/filesystem/${username}/${filePath}`
+                : `/api/v1/filesystem/${username}`;
+            await makeAPICall('GET', url);
+        }
+
+        async function testCreateFile() {
+            const username = document.getElementById('testUsername').value || 'demo';
+            const fileName = document.getElementById('testFilePath').value || 'test-file.txt';
+            await makeAPICall('POST', `/api/v1/filesystem/${username}`, {
+                name: fileName,
+                content: 'This is test content created via API',
+                isDirectory: false,
+                mimeType: 'text/plain'
+            });
+        }
+
+        async function testUpdateFile() {
+            const username = document.getElementById('testUsername').value || 'demo';
+            const fileName = document.getElementById('testFilePath').value || 'test-file.txt';
+            await makeAPICall('PUT', `/api/v1/filesystem/${username}/${fileName}`, {
+                content: 'Updated content via API at ' + new Date().toISOString(),
+                mimeType: 'text/plain'
+            });
+        }
+
+        async function testDeleteFile() {
+            const username = document.getElementById('testUsername').value || 'demo';
+            const fileName = document.getElementById('testFilePath').value || 'test-file.txt';
+            await makeAPICall('DELETE', `/api/v1/filesystem/${username}/${fileName}`);
+        }
+
+        async function testSearchFiles() {
+            const username = document.getElementById('testUsername').value || 'demo';
+            const searchTerm = prompt('Enter search term:', 'test') || 'test';
+            await makeAPICall('GET', `/api/v1/filesystem/${username}/search?match=${encodeURIComponent(searchTerm)}`);
+        }
+
+        // Initialize with demo user
+        document.getElementById('testUsername').value = 'demo';
+    </script>
+</body>
+</html>

@@ -1,0 +1,208 @@
+<!-- Document Editor Page for Authenticated Users -->
+<div class="row">
+    
+    <!-- Editor Header -->
+    <div class="col-12 mb-3">
+        <div class="card shadow-sm border-0">
+            <div class="card-body py-3">
+                <div class="row align-items-center">
+                    <div class="col-md-6">
+                        <div class="d-flex align-items-center">
+                            <button class="btn btn-outline-secondary me-3" onclick="goBack()">
+                                <i class="bi bi-arrow-left"></i> Back
+                            </button>
+                            <div>
+                                <input type="text" class="form-control form-control-lg border-0 fs-4 fw-bold" 
+                                       id="documentTitle" value="<%= file ? file.name : 'Untitled Document' %>" 
+                                       placeholder="Document Title">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="d-flex justify-content-end align-items-center">
+                            <div class="me-3">
+                                <small class="text-muted" id="saveStatus">
+                                    <% if (file && file.updatedAt) { %>
+                                        Last saved: <%= new Date(file.updatedAt).toLocaleString() %>
+                                    <% } else { %>
+                                        Not saved
+                                    <% } %>
+                                </small>
+                            </div>
+                            <div class="btn-group" role="group">
+                                <button class="btn btn-success" onclick="saveDocument()" id="saveBtn">
+                                    <i class="bi bi-floppy"></i> Save
+                                </button>
+                                <button class="btn btn-outline-primary" onclick="shareDocument()" id="shareBtn">
+                                    <i class="bi bi-share"></i> Share
+                                </button>
+                                <div class="btn-group" role="group">
+                                    <button class="btn btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">
+                                        <i class="bi bi-three-dots"></i>
+                                    </button>
+                                    <ul class="dropdown-menu">
+                                        <li><a class="dropdown-item" href="#" onclick="exportDocument('txt')">
+                                            <i class="bi bi-download"></i> Export as Text
+                                        </a></li>
+                                        <li><a class="dropdown-item" href="#" onclick="printDocument()">
+                                            <i class="bi bi-printer"></i> Print
+                                        </a></li>
+                                        <li><hr class="dropdown-divider"></li>
+                                        <li><a class="dropdown-item text-danger" href="#" onclick="deleteDocument()">
+                                            <i class="bi bi-trash"></i> Delete
+                                        </a></li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Editor Toolbar -->
+    <div class="col-12 mb-3">
+        <div class="card shadow-sm border-0">
+            <div class="card-body py-3">
+                <div class="btn-toolbar" role="toolbar">
+                    
+                    <!-- Undo/Redo Group -->
+                    <div class="btn-group me-3" role="group">
+                        <button class="btn btn-outline-secondary btn-sm" onclick="execCommand('undo')" title="Undo">
+                            <i class="bi bi-arrow-counterclockwise"></i>
+                        </button>
+                        <button class="btn btn-outline-secondary btn-sm" onclick="execCommand('redo')" title="Redo">
+                            <i class="bi bi-arrow-clockwise"></i>
+                        </button>
+                    </div>
+
+                    <!-- Font Formatting Group -->
+                    <div class="btn-group me-3" role="group">
+                        <button class="btn btn-outline-secondary btn-sm" onclick="execCommand('bold')" title="Bold">
+                            <i class="bi bi-type-bold"></i>
+                        </button>
+                        <button class="btn btn-outline-secondary btn-sm" onclick="execCommand('italic')" title="Italic">
+                            <i class="bi bi-type-italic"></i>
+                        </button>
+                        <button class="btn btn-outline-secondary btn-sm" onclick="execCommand('underline')" title="Underline">
+                            <i class="bi bi-type-underline"></i>
+                        </button>
+                        <button class="btn btn-outline-secondary btn-sm" onclick="execCommand('strikeThrough')" title="Strikethrough">
+                            <i class="bi bi-type-strikethrough"></i>
+                        </button>
+                    </div>
+
+                    <!-- Alignment Group -->
+                    <div class="btn-group me-3" role="group">
+                        <button class="btn btn-outline-secondary btn-sm" onclick="execCommand('justifyLeft')" title="Align Left">
+                            <i class="bi bi-text-left"></i>
+                        </button>
+                        <button class="btn btn-outline-secondary btn-sm" onclick="execCommand('justifyCenter')" title="Center">
+                            <i class="bi bi-text-center"></i>
+                        </button>
+                        <button class="btn btn-outline-secondary btn-sm" onclick="execCommand('justifyRight')" title="Align Right">
+                            <i class="bi bi-text-right"></i>
+                        </button>
+                        <button class="btn btn-outline-secondary btn-sm" onclick="execCommand('justifyFull')" title="Justify">
+                            <i class="bi bi-justify"></i>
+                        </button>
+                    </div>
+
+                    <!-- List Group -->
+                    <div class="btn-group me-3" role="group">
+                        <button class="btn btn-outline-secondary btn-sm" onclick="execCommand('insertUnorderedList')" title="Bullet List">
+                            <i class="bi bi-list-ul"></i>
+                        </button>
+                        <button class="btn btn-outline-secondary btn-sm" onclick="execCommand('insertOrderedList')" title="Numbered List">
+                            <i class="bi bi-list-ol"></i>
+                        </button>
+                    </div>
+
+                    <!-- Font Size & Color -->
+                    <div class="btn-group me-3" role="group">
+                        <select class="form-select form-select-sm" id="fontSize" onchange="changeFontSize()" style="width: auto;">
+                            <option value="1">8pt</option>
+                            <option value="2">10pt</option>
+                            <option value="3" selected>12pt</option>
+                            <option value="4">14pt</option>
+                            <option value="5">18pt</option>
+                            <option value="6">24pt</option>
+                            <option value="7">36pt</option>
+                        </select>
+                        <input type="color" class="btn btn-outline-secondary btn-sm" id="textColor" onchange="changeTextColor()" title="Text Color" style="width: 40px;">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Editor -->
+    <div class="col-12">
+        <div class="card shadow border-0" style="min-height: 600px;">
+            <div class="card-body p-0">
+                <div id="editor" contenteditable="true" style="min-height: 580px; padding: 2rem; font-family: 'Times New Roman', serif; font-size: 12pt; line-height: 1.6; outline: none; background: white;">
+                    <% if (file && file.content) { %>
+                        <%- file.content %>
+                    <% } else { %>
+                        <p>Start typing your document here...</p>
+                    <% } %>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Hidden form for file data -->
+<input type="hidden" id="fileId" value="<%= file ? file.id : '' %>">
+<input type="hidden" id="isNewDocument" value="<%= !file %>">
+
+<!-- Auto-save indicator -->
+<div id="autoSaveIndicator" class="position-fixed bottom-0 end-0 m-3" style="display: none;">
+    <div class="alert alert-info alert-dismissible fade show" role="alert">
+        <i class="bi bi-cloud-upload"></i> Auto-saving...
+    </div>
+</div>
+
+<style>
+    #editor {
+        border: none !important;
+        resize: none;
+    }
+    
+    #editor:focus {
+        box-shadow: none !important;
+    }
+    
+    .btn-toolbar .btn-group {
+        flex-wrap: nowrap;
+    }
+    
+    @media (max-width: 768px) {
+        .btn-toolbar {
+            flex-wrap: wrap;
+        }
+        
+        .btn-group {
+            margin-bottom: 0.5rem;
+        }
+    }
+    
+    /* Print styles */
+    @media print {
+        .card-body:first-child,
+        .btn-toolbar,
+        .card:not(:last-child) {
+            display: none !important;
+        }
+        
+        #editor {
+            padding: 0 !important;
+            margin: 0 !important;
+            box-shadow: none !important;
+            border: none !important;
+        }
+    }
+</style>
+
+<script src="/js/editor.js"></script>

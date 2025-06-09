@@ -1,0 +1,270 @@
+<!-- Files Management Page for Authenticated Users -->
+<div class="row">
+    
+    <!-- Page Header -->
+    <div class="col-12 mb-4">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h1 class="display-6 fw-bold mb-2">
+                    <i class="bi bi-folder me-2"></i>My Files
+                </h1>
+                <p class="text-muted mb-0">Manage your documents and folders</p>
+            </div>
+            <div>
+                <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createModal">
+                    <i class="bi bi-plus-circle me-2"></i>Create New
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toolbar -->
+    <div class="col-12 mb-4">
+        <div class="card shadow-sm border-0">
+            <div class="card-body py-3">
+                <div class="row align-items-center">
+                    <div class="col-md-6">
+                        <div class="btn-group" role="group">
+                            <input type="radio" class="btn-check" name="viewMode" id="gridView" autocomplete="off" checked>
+                            <label class="btn btn-outline-primary" for="gridView">
+                                <i class="bi bi-grid-3x3-gap"></i> Grid
+                            </label>
+                            
+                            <input type="radio" class="btn-check" name="viewMode" id="listView" autocomplete="off">
+                            <label class="btn btn-outline-primary" for="listView">
+                                <i class="bi bi-list"></i> List
+                            </label>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="d-flex justify-content-end">
+                            <select class="form-select w-auto me-2" id="sortBy">
+                                <option value="name">Sort by Name</option>
+                                <option value="date">Sort by Date</option>
+                                <option value="size">Sort by Size</option>
+                                <option value="type">Sort by Type</option>
+                            </select>
+                            <select class="form-select w-auto" id="filterType">
+                                <option value="all">All Items</option>
+                                <option value="document">Documents</option>
+                                <option value="folder">Folders</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Files and Folders -->
+    <div class="col-12">
+        <div class="card shadow border-0">
+            <div class="card-body">
+                
+                <!-- Empty State -->
+                <% if (files.length === 0 && folders.length === 0) { %>
+                    <div class="text-center py-5">
+                        <i class="bi bi-folder-x text-muted" style="font-size: 5rem;"></i>
+                        <h3 class="text-muted mt-4 mb-3">No files or folders yet</h3>
+                        <p class="text-muted mb-4">Start by creating your first document or folder.</p>
+                        <button class="btn btn-primary btn-lg" data-bs-toggle="modal" data-bs-target="#createModal">
+                            <i class="bi bi-plus-circle me-2"></i>Create Your First Item
+                        </button>
+                    </div>
+                <% } else { %>
+
+                    <!-- Grid View -->
+                    <div id="gridViewContainer">
+                        <div class="row" id="filesGrid">
+                            
+                            <!-- Folders -->
+                            <% folders.forEach(folder => { %>
+                                <div class="col-xl-2 col-lg-3 col-md-4 col-sm-6 mb-4 item-card" data-type="folder" data-name="<%= folder.name %>" data-date="<%= new Date(folder.createdAt).getTime() %>">
+                                    <div class="card h-100 border-0 shadow-sm file-item folder-item">
+                                        <div class="card-body text-center p-3">
+                                            <i class="bi bi-folder-fill text-warning" style="font-size: 3rem;"></i>
+                                            <h6 class="card-title mt-2 mb-1 text-truncate" title="<%= folder.name %>">
+                                                <%= folder.name %>
+                                            </h6>
+                                            <small class="text-muted">
+                                                <%= new Date(folder.createdAt).toLocaleDateString() %>
+                                            </small>
+                                            <div class="mt-2">
+                                                <div class="btn-group" role="group">
+                                                    <button class="btn btn-outline-primary btn-sm" onclick="openFolder('<%= folder.id %>')">
+                                                        <i class="bi bi-folder-open"></i>
+                                                    </button>
+                                                    <button class="btn btn-outline-secondary btn-sm" onclick="renameItem('folder', '<%= folder.id %>', '<%= folder.name %>')">
+                                                        <i class="bi bi-pencil"></i>
+                                                    </button>
+                                                    <button class="btn btn-outline-danger btn-sm" onclick="deleteItem('folder', '<%= folder.id %>')">
+                                                        <i class="bi bi-trash"></i>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            <% }) %>
+
+                            <!-- Files -->
+                            <% files.forEach(file => { %>
+                                <div class="col-xl-2 col-lg-3 col-md-4 col-sm-6 mb-4 item-card" data-type="<%= file.type %>" data-name="<%= file.name %>" data-date="<%= new Date(file.updatedAt || file.createdAt).getTime() %>" data-size="<%= file.size || 0 %>">
+                                    <div class="card h-100 border-0 shadow-sm file-item document-item">
+                                        <div class="card-body text-center p-3">
+                                            <i class="bi bi-file-earmark-text text-primary" style="font-size: 3rem;"></i>
+                                            <h6 class="card-title mt-2 mb-1 text-truncate" title="<%= file.name %>">
+                                                <%= file.name %>
+                                            </h6>
+                                            <small class="text-muted">
+                                                <%= new Date(file.updatedAt || file.createdAt).toLocaleDateString() %>
+                                                <br>
+                                                <%= Math.round((file.size || 0) / 1024) %>KB
+                                            </small>
+                                            <div class="mt-2">
+                                                <div class="btn-group" role="group">
+                                                    <button class="btn btn-outline-success btn-sm" onclick="viewFile('<%= file.id %>')">
+                                                        <i class="bi bi-eye"></i>
+                                                    </button>
+                                                    <button class="btn btn-outline-primary btn-sm" onclick="editFile('<%= file.id %>')">
+                                                        <i class="bi bi-pencil"></i>
+                                                    </button>
+                                                    <button class="btn btn-outline-danger btn-sm" onclick="deleteItem('file', '<%= file.id %>')">
+                                                        <i class="bi bi-trash"></i>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            <% }) %>
+                        </div>
+                    </div>
+
+                    <!-- List View -->
+                    <div id="listViewContainer" style="display: none;">
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th><i class="bi bi-file-earmark me-2"></i>Name</th>
+                                        <th>Type</th>
+                                        <th>Size</th>
+                                        <th>Modified</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="filesTable">
+                                    
+                                    <!-- Folders -->
+                                    <% folders.forEach(folder => { %>
+                                        <tr class="item-row" data-type="folder" data-name="<%= folder.name %>" data-date="<%= new Date(folder.createdAt).getTime() %>">
+                                            <td>
+                                                <i class="bi bi-folder-fill text-warning me-2"></i>
+                                                <strong><%= folder.name %></strong>
+                                            </td>
+                                            <td><span class="badge bg-warning">Folder</span></td>
+                                            <td>—</td>
+                                            <td><%= new Date(folder.createdAt).toLocaleDateString() %></td>
+                                            <td>
+                                                <div class="btn-group" role="group">
+                                                    <button class="btn btn-outline-primary btn-sm" onclick="openFolder('<%= folder.id %>')">
+                                                        <i class="bi bi-folder-open"></i>
+                                                    </button>
+                                                    <button class="btn btn-outline-secondary btn-sm" onclick="renameItem('folder', '<%= folder.id %>', '<%= folder.name %>')">
+                                                        <i class="bi bi-pencil"></i>
+                                                    </button>
+                                                    <button class="btn btn-outline-danger btn-sm" onclick="deleteItem('folder', '<%= folder.id %>')">
+                                                        <i class="bi bi-trash"></i>
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    <% }) %>
+
+                                    <!-- Files -->
+                                    <% files.forEach(file => { %>
+                                        <tr class="item-row" data-type="<%= file.type %>" data-name="<%= file.name %>" data-date="<%= new Date(file.updatedAt || file.createdAt).getTime() %>" data-size="<%= file.size || 0 %>">
+                                            <td>
+                                                <i class="bi bi-file-earmark-text text-primary me-2"></i>
+                                                <%= file.name %>
+                                            </td>
+                                            <td><span class="badge bg-primary">Document</span></td>
+                                            <td><%= Math.round((file.size || 0) / 1024) %>KB</td>
+                                            <td><%= new Date(file.updatedAt || file.createdAt).toLocaleDateString() %></td>
+                                            <td>
+                                                <div class="btn-group" role="group">
+                                                    <button class="btn btn-outline-success btn-sm" onclick="viewFile('<%= file.id %>')">
+                                                        <i class="bi bi-eye"></i>
+                                                    </button>
+                                                    <button class="btn btn-outline-primary btn-sm" onclick="editFile('<%= file.id %>')">
+                                                        <i class="bi bi-pencil"></i>
+                                                    </button>
+                                                    <button class="btn btn-outline-danger btn-sm" onclick="deleteItem('file', '<%= file.id %>')">
+                                                        <i class="bi bi-trash"></i>
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    <% }) %>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                <% } %>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Create Modal (same as dashboard) -->
+<div class="modal fade" id="createModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Create New</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row">
+                    <div class="col-6">
+                        <div class="card text-center h-100 create-option" data-type="document">
+                            <div class="card-body d-flex flex-column justify-content-center">
+                                <i class="bi bi-file-earmark-text text-primary" style="font-size: 3rem;"></i>
+                                <h6 class="mt-2">Document</h6>
+                                <small class="text-muted">Create a new text document</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="card text-center h-100 create-option" data-type="folder">
+                            <div class="card-body d-flex flex-column justify-content-center">
+                                <i class="bi bi-folder text-warning" style="font-size: 3rem;"></i>
+                                <h6 class="mt-2">Folder</h6>
+                                <small class="text-muted">Create a new folder</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div id="createForm" class="mt-4" style="display: none;">
+                    <form id="newItemForm">
+                        <input type="hidden" id="itemType" value="">
+                        <div class="mb-3">
+                            <label for="itemName" class="form-label">Name</label>
+                            <input type="text" class="form-control" id="itemName" required>
+                        </div>
+                        <div class="mb-3" id="descriptionField" style="display: none;">
+                            <label for="itemDescription" class="form-label">Description</label>
+                            <textarea class="form-control" id="itemDescription" rows="3"></textarea>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="createBtn" style="display: none;" onclick="createItem()">Create</button>
+            </div>
+        </div>
+    </div>
+</div>

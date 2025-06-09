@@ -1,0 +1,236 @@
+<!-- Dashboard for Authenticated Users -->
+<div class="row">
+    
+    <!-- Welcome Header -->
+    <div class="col-12 mb-4">
+        <div class="bg-gradient bg-primary text-white p-4 rounded-4 shadow">
+            <div class="row align-items-center">
+                <div class="col-md-8">
+                    <h1 class="display-5 fw-bold mb-2">
+                        Welcome back, <%= user.name %>! 👋
+                    </h1>
+                    <p class="lead mb-0">
+                        Your personalized BDPADrive workspace is ready. Create, edit, and manage your documents.
+                    </p>
+                </div>
+                <div class="col-md-4 text-end">
+                    <button class="btn btn-light btn-lg" data-bs-toggle="modal" data-bs-target="#createModal">
+                        <i class="bi bi-plus-circle me-2"></i>Create New
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Stats -->
+    <div class="col-12 mb-4">
+        <div class="row">
+            <div class="col-md-3 mb-3">
+                <div class="card border-0 shadow-sm">
+                    <div class="card-body text-center">
+                        <i class="bi bi-file-earmark-text text-primary" style="font-size: 2.5rem;"></i>
+                        <h5 class="card-title mt-2">Documents</h5>
+                        <h3 class="text-primary mb-0">
+                            <%= files.filter(f => f.type === 'document').length %>
+                        </h3>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="card border-0 shadow-sm">
+                    <div class="card-body text-center">
+                        <i class="bi bi-folder text-warning" style="font-size: 2.5rem;"></i>
+                        <h5 class="card-title mt-2">Folders</h5>
+                        <h3 class="text-warning mb-0"><%= folders.length %></h3>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="card border-0 shadow-sm">
+                    <div class="card-body text-center">
+                        <i class="bi bi-cloud-upload text-success" style="font-size: 2.5rem;"></i>
+                        <h5 class="card-title mt-2">Storage Used</h5>
+                        <h3 class="text-success mb-0">
+                            <%= Math.round(files.reduce((acc, f) => acc + (f.size || 0), 0) / 1024) %>KB
+                        </h3>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="card border-0 shadow-sm">
+                    <div class="card-body text-center">
+                        <i class="bi bi-clock-history text-info" style="font-size: 2.5rem;"></i>
+                        <h5 class="card-title mt-2">Last Activity</h5>
+                        <small class="text-info">
+                            <% if (files.length > 0) { %>
+                                <%= new Date(Math.max(...files.map(f => new Date(f.updatedAt || f.createdAt)))).toLocaleDateString() %>
+                            <% } else { %>
+                                No activity yet
+                            <% } %>
+                        </small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Files -->
+    <div class="col-lg-8 mb-4">
+        <div class="card shadow border-0">
+            <div class="card-header bg-white border-bottom">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">
+                        <i class="bi bi-clock-history me-2"></i>Recent Files
+                    </h5>
+                    <a href="/files" class="btn btn-outline-primary btn-sm">
+                        View All <i class="bi bi-arrow-right"></i>
+                    </a>
+                </div>
+            </div>
+            <div class="card-body">
+                <% if (files.length === 0) { %>
+                    <div class="text-center py-5">
+                        <i class="bi bi-file-earmark text-muted" style="font-size: 4rem;"></i>
+                        <h5 class="text-muted mt-3">No files yet</h5>
+                        <p class="text-muted">Create your first document to get started!</p>
+                        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createModal">
+                            <i class="bi bi-plus-circle me-2"></i>Create Document
+                        </button>
+                    </div>
+                <% } else { %>
+                    <div class="list-group list-group-flush">
+                        <% files.slice(0, 5).forEach(file => { %>
+                            <div class="list-group-item d-flex justify-content-between align-items-center">
+                                <div class="d-flex align-items-center">
+                                    <i class="bi bi-file-earmark-text text-primary me-3" style="font-size: 1.5rem;"></i>
+                                    <div>
+                                        <h6 class="mb-1"><%= file.name %></h6>
+                                        <small class="text-muted">
+                                            Modified <%= new Date(file.updatedAt || file.createdAt).toLocaleDateString() %>
+                                        </small>
+                                    </div>
+                                </div>
+                                <div>
+                                    <button class="btn btn-outline-primary btn-sm me-2">
+                                        <i class="bi bi-eye"></i>
+                                    </button>
+                                    <button class="btn btn-outline-secondary btn-sm">
+                                        <i class="bi bi-pencil"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        <% }) %>
+                    </div>
+                <% } %>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="col-lg-4 mb-4">
+        <div class="card shadow border-0">
+            <div class="card-header bg-white border-bottom">
+                <h5 class="mb-0">
+                    <i class="bi bi-lightning me-2"></i>Quick Actions
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="d-grid gap-2">
+                    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createModal">
+                        <i class="bi bi-file-earmark-plus me-2"></i>New Document
+                    </button>
+                    <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#createModal">
+                        <i class="bi bi-folder-plus me-2"></i>New Folder
+                    </button>
+                    <a href="/files" class="btn btn-outline-secondary">
+                        <i class="bi bi-folder me-2"></i>Browse Files
+                    </a>
+                    <a href="/search" class="btn btn-outline-info">
+                        <i class="bi bi-search me-2"></i>Search Files
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Account Info -->
+        <div class="card shadow border-0 mt-4">
+            <div class="card-header bg-white border-bottom">
+                <h5 class="mb-0">
+                    <i class="bi bi-person me-2"></i>Account Info
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-12 mb-2">
+                        <strong>Name:</strong> <%= user.name %>
+                    </div>
+                    <div class="col-12 mb-2">
+                        <strong>Email:</strong> <%= user.email %>
+                    </div>
+                    <div class="col-12 mb-2">
+                        <strong>Member since:</strong> 
+                        <%= new Date(user.createdAt).toLocaleDateString() %>
+                    </div>
+                    <% if (user.lastLogin) { %>
+                    <div class="col-12">
+                        <strong>Last login:</strong> 
+                        <%= new Date(user.lastLogin).toLocaleDateString() %>
+                    </div>
+                    <% } %>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Create Modal -->
+<div class="modal fade" id="createModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Create New</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row">
+                    <div class="col-6">
+                        <div class="card text-center h-100 create-option" data-type="document">
+                            <div class="card-body d-flex flex-column justify-content-center">
+                                <i class="bi bi-file-earmark-text text-primary" style="font-size: 3rem;"></i>
+                                <h6 class="mt-2">Document</h6>
+                                <small class="text-muted">Create a new text document</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="card text-center h-100 create-option" data-type="folder">
+                            <div class="card-body d-flex flex-column justify-content-center">
+                                <i class="bi bi-folder text-warning" style="font-size: 3rem;"></i>
+                                <h6 class="mt-2">Folder</h6>
+                                <small class="text-muted">Create a new folder</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div id="createForm" class="mt-4" style="display: none;">
+                    <form id="newItemForm">
+                        <input type="hidden" id="itemType" value="">
+                        <div class="mb-3">
+                            <label for="itemName" class="form-label">Name</label>
+                            <input type="text" class="form-control" id="itemName" required>
+                        </div>
+                        <div class="mb-3" id="descriptionField" style="display: none;">
+                            <label for="itemDescription" class="form-label">Description</label>
+                            <textarea class="form-control" id="itemDescription" rows="3"></textarea>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="createBtn" style="display: none;" onclick="createItem()">Create</button>
+            </div>
+        </div>
+    </div>
+</div>
