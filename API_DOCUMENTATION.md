@@ -257,6 +257,36 @@ Update an existing file or directory.
 }
 ```
 
+### PATCH /api/v1/filesystem/:username/:path
+
+Move or rename a file or directory.
+
+**Request Body:**
+```json
+{
+  "newPath": "new-filename.txt"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "File moved successfully",
+  "node": {
+    "name": "new-filename.txt",
+    "isDirectory": false,
+    "size": 15,
+    "mimeType": "text/plain",
+    "lastModified": "2025-06-09T...",
+    "content": "File content",
+    "owner": "username",
+    "createdAt": "2025-06-09T...",
+    "tags": ["tag1", "tag2"]
+  }
+}
+```
+
 ### DELETE /api/v1/filesystem/:username/:path
 
 Delete a file or directory.
