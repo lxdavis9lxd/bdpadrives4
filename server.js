@@ -525,41 +525,79 @@ app.get('/api/v1/filesystem/:username/search', requireAuth, requireUsername, (re
       }))
     ];
     
-    // Apply match filters
+    // Apply match filters (enhanced with simple text search)
     if (match) {
       try {
-        const matchQuery = JSON.parse(decodeURIComponent(match));
-        allNodes = allNodes.filter(node => {
-          return Object.keys(matchQuery).every(key => {
-            if (key === 'createdAt' && typeof matchQuery[key] === 'object') {
-              const query = matchQuery[key];
-              if (query.$gt) return node.createdAt > query.$gt;
-              if (query.$gte) return node.createdAt >= query.$gte;
-              if (query.$lt) return node.createdAt < query.$lt;
-              if (query.$lte) return node.createdAt <= query.$lte;
-              if (query.$or) {
-                return query.$or.some(orQuery => {
-                  if (orQuery.$gt) return node.createdAt > orQuery.$gt;
-                  if (orQuery.$gte) return node.createdAt >= orQuery.$gte;
-                  if (orQuery.$lt) return node.createdAt < orQuery.$lt;
-                  if (orQuery.$lte) return node.createdAt <= orQuery.$lte;
-                  return false;
-                });
+        // Try to parse as JSON query first
+        let isJsonQuery = false;
+        let matchQuery = null;
+        
+        try {
+          matchQuery = JSON.parse(decodeURIComponent(match));
+          isJsonQuery = true;
+        } catch (jsonError) {
+          // If not valid JSON, treat as simple text search
+          isJsonQuery = false;
+        }
+        
+        if (isJsonQuery && matchQuery) {
+          // Advanced JSON query
+          allNodes = allNodes.filter(node => {
+            return Object.keys(matchQuery).every(key => {
+              if (key === 'createdAt' && typeof matchQuery[key] === 'object') {
+                const query = matchQuery[key];
+                if (query.$gt) return node.createdAt > query.$gt;
+                if (query.$gte) return node.createdAt >= query.$gte;
+                if (query.$lt) return node.createdAt < query.$lt;
+                if (query.$lte) return node.createdAt <= query.$lte;
+                if (query.$or) {
+                  return query.$or.some(orQuery => {
+                    if (orQuery.$gt) return node.createdAt > orQuery.$gt;
+                    if (orQuery.$gte) return node.createdAt >= orQuery.$gte;
+                    if (orQuery.$lt) return node.createdAt < orQuery.$lt;
+                    if (orQuery.$lte) return node.createdAt <= orQuery.$lte;
+                    return false;
+                  });
+                }
               }
-            }
-            if (key === 'name') {
-              return node.name.toLowerCase().includes(matchQuery[key].toLowerCase());
-            }
-            if (key === 'tags' && Array.isArray(matchQuery[key])) {
-              return matchQuery[key].some(tag => 
-                node.tags && node.tags.some(nodeTag => 
-                  nodeTag.toLowerCase().includes(tag.toLowerCase())
-                )
-              );
-            }
-            return node[key] === matchQuery[key];
+              if (key === 'name') {
+                return node.name.toLowerCase().includes(matchQuery[key].toLowerCase());
+              }
+              if (key === 'tags' && Array.isArray(matchQuery[key])) {
+                return matchQuery[key].some(tag => 
+                  node.tags && node.tags.some(nodeTag => 
+                    nodeTag.toLowerCase().includes(tag.toLowerCase())
+                  )
+                );
+              }
+              if (key === 'owner') {
+                return node.owner && node.owner.toLowerCase().includes(matchQuery[key].toLowerCase());
+              }
+              if (key === 'content' || key === 'text') {
+                return node.text && node.text.toLowerCase().includes(matchQuery[key].toLowerCase());
+              }
+              return node[key] === matchQuery[key];
+            });
           });
-        });
+        } else {
+          // Simple text search across name, content, and tags
+          const searchTerm = decodeURIComponent(match).toLowerCase();
+          allNodes = allNodes.filter(node => {
+            // Search in name
+            if (node.name.toLowerCase().includes(searchTerm)) return true;
+            
+            // Search in content/text
+            if (node.text && node.text.toLowerCase().includes(searchTerm)) return true;
+            
+            // Search in tags
+            if (node.tags && node.tags.some(tag => tag.toLowerCase().includes(searchTerm))) return true;
+            
+            // Search in owner
+            if (node.owner && node.owner.toLowerCase().includes(searchTerm)) return true;
+            
+            return false;
+          });
+        }
       } catch (error) {
         return res.status(400).json({ success: false, error: 'Invalid match query' });
       }
@@ -610,30 +648,83 @@ app.get('/api/v1/filesystem/:username/search', requireAuth, requireUsername, (re
 // POST /api/v1/filesystem/:username
 app.post('/api/v1/filesystem/:username', requireAuth, requireUsername, (req, res) => {
   try {
-    const { type, name, contents, text, tags } = req.body;
+    const { type, name, contents, text, tags, symlinkTarget, isDirectory, content, mimeType } = req.body;
     const targetUsername = req.params.username;
     
     if (targetUsername !== req.username && req.user.email !== 'admin@bdpadrive.com') {
       return res.status(403).json({ success: false, error: 'Access denied' });
     }
     
-    if (!type || !name) {
-      return res.status(400).json({ success: false, error: 'Type and name are required' });
+    if (!name || !name.trim()) {
+      return res.status(400).json({ success: false, error: 'Name is required' });
     }
     
     const targetUser = Array.from(users.values()).find(u => u.email === targetUsername);
     if (!targetUser) {
       return res.status(404).json({ success: false, error: 'User not found' });
     }
+
+    // Determine the actual type based on various request formats
+    let actualType = type;
+    if (isDirectory === true) {
+      actualType = 'directory';
+    } else if (isDirectory === false) {
+      actualType = 'file';
+    } else if (symlinkTarget) {
+      actualType = 'symlink';
+    } else if (!actualType) {
+      actualType = 'file'; // Default to file
+    }
+
+    // Get the content from either 'text' or 'content' field
+    const fileContent = text || content || '';
+    
+    // Enforce 10KB content limit for files
+    if (actualType === 'file' && fileContent) {
+      const contentSize = Buffer.byteLength(fileContent, 'utf8');
+      if (contentSize > 10240) { // 10KB limit
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Content exceeds 10KB limit (10,240 bytes)' 
+        });
+      }
+    }
+
+    // Validate tags if provided
+    let validatedTags = [];
+    if (tags && Array.isArray(tags)) {
+      if (tags.length > 5) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Maximum 5 tags allowed' 
+        });
+      }
+      
+      const alphanumericRegex = /^[a-zA-Z0-9]+$/;
+      for (const tag of tags) {
+        if (!alphanumericRegex.test(tag)) {
+          return res.status(400).json({ 
+            success: false, 
+            error: `Tag "${tag}" must be alphanumeric only` 
+          });
+        }
+      }
+      validatedTags = tags.map(tag => tag.toLowerCase()); // Case-insensitive
+    }
     
     let newNode;
     
-    if (type === 'file') {
-      newNode = createFileNode({ name, text, tags }, targetUsername);
+    if (actualType === 'file') {
+      newNode = createFileNode({ 
+        name: name.trim(), 
+        text: fileContent, 
+        tags: validatedTags 
+      }, targetUsername);
+      
       const userFileList = userFiles.get(targetUser.id) || [];
       
       // Check for duplicate names
-      if (userFileList.some(file => file.name === name)) {
+      if (userFileList.some(file => file.name === name.trim())) {
         return res.status(409).json({ success: false, error: 'File name already exists' });
       }
       
@@ -647,17 +738,25 @@ app.post('/api/v1/filesystem/:username', requireAuth, requireUsername, (req, res
         createdAt: new Date(newNode.createdAt),
         updatedAt: new Date(newNode.modifiedAt),
         userId: targetUser.id,
-        tags: newNode.tags
+        owner: targetUsername,
+        tags: newNode.tags,
+        mimeType: mimeType || 'text/plain'
       };
       
       userFileList.push(internalFile);
       userFiles.set(targetUser.id, userFileList);
-    } else if (type === 'directory' || type === 'symlink') {
-      newNode = createMetaNode({ type, name, contents }, targetUsername);
+      
+    } else if (actualType === 'directory') {
+      newNode = createMetaNode({ 
+        type: actualType, 
+        name: name.trim(), 
+        contents: contents || [] 
+      }, targetUsername);
+      
       const userFolderList = userFolders.get(targetUser.id) || [];
       
       // Check for duplicate names
-      if (userFolderList.some(folder => folder.name === name)) {
+      if (userFolderList.some(folder => folder.name === name.trim())) {
         return res.status(409).json({ success: false, error: 'Folder name already exists' });
       }
       
@@ -669,11 +768,51 @@ app.post('/api/v1/filesystem/:username', requireAuth, requireUsername, (req, res
         createdAt: new Date(newNode.createdAt),
         updatedAt: new Date(newNode.createdAt),
         userId: targetUser.id,
+        owner: targetUsername,
         contents: newNode.contents
       };
       
       userFolderList.push(internalFolder);
       userFolders.set(targetUser.id, userFolderList);
+      
+    } else if (actualType === 'symlink') {
+      if (!symlinkTarget || !symlinkTarget.trim()) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Symlink target is required' 
+        });
+      }
+      
+      newNode = createSymlinkNode({ 
+        name: name.trim(), 
+        target: symlinkTarget.trim() 
+      }, targetUsername);
+      
+      const userFileList = userFiles.get(targetUser.id) || [];
+      
+      // Check for duplicate names
+      if (userFileList.some(file => file.name === name.trim())) {
+        return res.status(409).json({ success: false, error: 'Symlink name already exists' });
+      }
+      
+      // Convert to internal format (store symlinks as special files)
+      const internalSymlink = {
+        id: newNode.node_id,
+        name: newNode.name,
+        content: '',
+        type: 'symlink',
+        size: 0,
+        createdAt: new Date(newNode.createdAt),
+        updatedAt: new Date(newNode.modifiedAt),
+        userId: targetUser.id,
+        owner: targetUsername,
+        symlinkTarget: newNode.target,
+        tags: []
+      };
+      
+      userFileList.push(internalSymlink);
+      userFiles.set(targetUser.id, userFileList);
+      
     } else {
       return res.status(400).json({ success: false, error: 'Invalid node type' });
     }
@@ -688,12 +827,44 @@ app.post('/api/v1/filesystem/:username', requireAuth, requireUsername, (req, res
   }
 });
 
-// GET /api/v1/filesystem/:username/:node_id(/:node_id)*
-app.get('/api/v1/filesystem/:username/:node_ids(*)', requireAuth, requireUsername, (req, res) => {
+// Helper function to create symlink nodes
+const createSymlinkNode = (data, owner) => {
+  const now = Date.now();
+  return {
+    node_id: uuidv4(),
+    owner: owner,
+    createdAt: now,
+    modifiedAt: now,
+    type: 'symlink',
+    name: data.name,
+    target: data.target,
+    size: 0
+  };
+};
+
+// Helper function to check if symlink target exists and is valid
+const validateSymlinkTarget = (target, userFileList, userFolderList) => {
+  if (!target || !target.trim()) {
+    return { valid: false, broken: true, reason: 'Empty target' };
+  }
+  
+  // Check if target exists in user's files or folders
+  const targetExists = userFileList.some(file => file.name === target) || 
+                      userFolderList.some(folder => folder.name === target);
+  
+  return {
+    valid: targetExists,
+    broken: !targetExists,
+    reason: targetExists ? null : 'Target not found'
+  };
+};
+
+// GET /api/v1/filesystem/:username
+app.get('/api/v1/filesystem/:username', requireAuth, requireUsername, (req, res) => {
   try {
     const targetUsername = req.params.username;
-    const nodeIds = req.params.node_ids.split('/').filter(id => id);
     
+    // Check if user can access this username's files
     if (targetUsername !== req.username && req.user.email !== 'admin@bdpadrive.com') {
       return res.status(403).json({ success: false, error: 'Access denied' });
     }
@@ -706,62 +877,66 @@ app.get('/api/v1/filesystem/:username/:node_ids(*)', requireAuth, requireUsernam
     const userFileList = userFiles.get(targetUser.id) || [];
     const userFolderList = userFolders.get(targetUser.id) || [];
     
-    const foundNodes = [];
-    
-    nodeIds.forEach(nodeId => {
-      // Search files
-      const file = userFileList.find(f => f.id === nodeId);
-      if (file) {
-        foundNodes.push({
-          node_id: file.id,
-          owner: targetUsername,
-          createdAt: new Date(file.createdAt).getTime(),
-          modifiedAt: new Date(file.updatedAt || file.createdAt).getTime(),
-          type: 'file',
+    // Convert to filesystem API format
+    const children = [
+      ...userFileList.map(file => {
+        const node = {
           name: file.name,
+          isDirectory: false,
           size: file.size || 0,
-          text: file.content || '',
-          tags: file.tags || [],
-          lock: null
-        });
-        return;
-      }
-      
-      // Search folders
-      const folder = userFolderList.find(f => f.id === nodeId);
-      if (folder) {
-        foundNodes.push({
-          node_id: folder.id,
-          owner: targetUsername,
-          createdAt: new Date(folder.createdAt).getTime(),
-          type: folder.type || 'directory',
-          name: folder.name,
-          contents: folder.contents || []
-        });
-      }
-    });
-    
-    if (foundNodes.length === 0) {
-      return res.status(404).json({ success: false, error: 'Node(s) not found' });
-    }
+          mimeType: file.mimeType || 'text/plain',
+          lastModified: new Date(file.updatedAt || file.createdAt).toISOString(),
+          content: file.content || '',
+          owner: file.owner || targetUsername,
+          createdAt: new Date(file.createdAt).toISOString(),
+          tags: file.tags || []
+        };
+        
+        // Add symlink-specific properties
+        if (file.type === 'symlink') {
+          node.isSymlink = true;
+          node.symlinkTarget = file.symlinkTarget;
+          const validation = validateSymlinkTarget(file.symlinkTarget, userFileList, userFolderList);
+          node.symlinkBroken = validation.broken;
+          if (validation.broken) {
+            node.symlinkError = validation.reason;
+          }
+        }
+        
+        return node;
+      }),
+      ...userFolderList.map(folder => ({
+        name: folder.name,
+        isDirectory: true,
+        lastModified: new Date(folder.updatedAt || folder.createdAt).toISOString(),
+        owner: folder.owner || targetUsername,
+        createdAt: new Date(folder.createdAt).toISOString(),
+        children: [] // For now, flat structure
+      }))
+    ];
     
     res.json({
       success: true,
-      nodes: foundNodes
+      node: {
+        name: 'root',
+        isDirectory: true,
+        lastModified: new Date().toISOString(),
+        children: children
+      }
     });
   } catch (error) {
-    console.error('Node retrieval error:', error);
+    console.error('Get filesystem error:', error);
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
 
-// PUT /api/v1/filesystem/:username/:node_id
-app.put('/api/v1/filesystem/:username/:node_id', requireAuth, requireUsername, (req, res) => {
+// GET /api/v1/filesystem/:username/:path
+app.get('/api/v1/filesystem/:username/:path', requireAuth, requireUsername, (req, res) => {
   try {
-    const { name, owner, contents, text, tags, lock } = req.body;
     const targetUsername = req.params.username;
-    const nodeId = req.params.node_id;
+    const path = req.params.path;
     
+    // Check if user can access this username's files
     if (targetUsername !== req.username && req.user.email !== 'admin@bdpadrive.com') {
       return res.status(403).json({ success: false, error: 'Access denied' });
     }
@@ -774,70 +949,322 @@ app.put('/api/v1/filesystem/:username/:node_id', requireAuth, requireUsername, (
     const userFileList = userFiles.get(targetUser.id) || [];
     const userFolderList = userFolders.get(targetUser.id) || [];
     
-    // Try to find and update file
-    const fileIndex = userFileList.findIndex(f => f.id === nodeId);
+    // Look for file first
+    const file = userFileList.find(f => f.name === path);
+    if (file) {
+      const node = {
+        name: file.name,
+        isDirectory: false,
+        size: file.size || 0,
+        mimeType: file.mimeType || 'text/plain',
+        lastModified: new Date(file.updatedAt || file.createdAt).toISOString(),
+        content: file.content || '',
+        owner: file.owner || targetUsername,
+        createdAt: new Date(file.createdAt).toISOString(),
+        tags: file.tags || []
+      };
+      
+      // Add symlink-specific properties
+      if (file.type === 'symlink') {
+        node.isSymlink = true;
+        node.symlinkTarget = file.symlinkTarget;
+        const validation = validateSymlinkTarget(file.symlinkTarget, userFileList, userFolderList);
+        node.symlinkBroken = validation.broken;
+        if (validation.broken) {
+          node.symlinkError = validation.reason;
+        }
+      }
+      
+      return res.json({
+        success: true,
+        node: node
+      });
+    }
+    
+    // Look for folder
+    const folder = userFolderList.find(f => f.name === path);
+    if (folder) {
+      return res.json({
+        success: true,
+        node: {
+          name: folder.name,
+          isDirectory: true,
+          lastModified: new Date(folder.updatedAt || folder.createdAt).toISOString(),
+          owner: folder.owner || targetUsername,
+          createdAt: new Date(folder.createdAt).toISOString(),
+          children: [] // For now, flat structure
+        }
+      });
+    }
+    
+    res.status(404).json({ success: false, error: 'File or directory not found' });
+  } catch (error) {
+    console.error('Get file error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+// PUT /api/v1/filesystem/:username/:path
+app.put('/api/v1/filesystem/:username/:path', requireAuth, requireUsername, (req, res) => {
+  try {
+    const targetUsername = req.params.username;
+    const path = req.params.path;
+    const { name, content, mimeType, tags, owner, symlinkTarget } = req.body;
+    
+    // Check if user can access this username's files
+    if (targetUsername !== req.username && req.user.email !== 'admin@bdpadrive.com') {
+      return res.status(403).json({ success: false, error: 'Access denied' });
+    }
+    
+    const targetUser = Array.from(users.values()).find(u => u.email === targetUsername);
+    if (!targetUser) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+    
+    const userFileList = userFiles.get(targetUser.id) || [];
+    const userFolderList = userFolders.get(targetUser.id) || [];
+    
+    // Validate tags if provided
+    if (tags && Array.isArray(tags)) {
+      if (tags.length > 5) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Maximum 5 tags allowed' 
+        });
+      }
+      
+      const alphanumericRegex = /^[a-zA-Z0-9]+$/;
+      for (const tag of tags) {
+        if (!alphanumericRegex.test(tag)) {
+          return res.status(400).json({ 
+            success: false, 
+            error: `Tag "${tag}" must be alphanumeric only` 
+          });
+        }
+      }
+    }
+    
+    // Validate content size for files
+    if (content !== undefined) {
+      const contentSize = Buffer.byteLength(content, 'utf8');
+      if (contentSize > 10240) { // 10KB limit
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Content exceeds 10KB limit (10,240 bytes)' 
+        });
+      }
+    }
+    
+    // Look for file first
+    const fileIndex = userFileList.findIndex(f => f.name === path);
     if (fileIndex !== -1) {
       const file = userFileList[fileIndex];
       
-      if (name && name !== file.name) {
-        if (userFileList.some(f => f.name === name && f.id !== nodeId)) {
+      // Update file properties
+      if (name && name.trim() !== file.name) {
+        // Check if new name already exists
+        if (userFileList.some(f => f.name === name.trim() && f !== file)) {
           return res.status(409).json({ success: false, error: 'File name already exists' });
         }
-        file.name = name;
+        file.name = name.trim();
       }
       
-      if (text !== undefined) {
-        file.content = text;
-        file.size = Buffer.byteLength(text, 'utf8');
+      if (content !== undefined) {
+        file.content = content;
+        file.size = Buffer.byteLength(content, 'utf8');
       }
       
-      if (tags !== undefined) {
-        file.tags = tags;
+      if (mimeType) {
+        file.mimeType = mimeType;
+      }
+      
+      if (tags) {
+        file.tags = tags.map(tag => tag.toLowerCase());
+      }
+      
+      if (owner) {
+        file.owner = owner;
+      }
+      
+      if (symlinkTarget !== undefined && file.type === 'symlink') {
+        file.symlinkTarget = symlinkTarget;
       }
       
       file.updatedAt = new Date();
       userFileList[fileIndex] = file;
       userFiles.set(targetUser.id, userFileList);
       
-      return res.json({ success: true });
+      const responseNode = {
+        name: file.name,
+        isDirectory: false,
+        size: file.size || 0,
+        mimeType: file.mimeType || 'text/plain',
+        lastModified: new Date(file.updatedAt).toISOString(),
+        content: file.content || '',
+        owner: file.owner || targetUsername,
+        createdAt: new Date(file.createdAt).toISOString(),
+        tags: file.tags || []
+      };
+      
+      if (file.type === 'symlink') {
+        responseNode.isSymlink = true;
+        responseNode.symlinkTarget = file.symlinkTarget;
+        const validation = validateSymlinkTarget(file.symlinkTarget, userFileList, userFolderList);
+        responseNode.symlinkBroken = validation.broken;
+        if (validation.broken) {
+          responseNode.symlinkError = validation.reason;
+        }
+      }
+      
+      return res.json({
+        success: true,
+        node: responseNode
+      });
     }
     
-    // Try to find and update folder
-    const folderIndex = userFolderList.findIndex(f => f.id === nodeId);
+    // Look for folder
+    const folderIndex = userFolderList.findIndex(f => f.name === path);
     if (folderIndex !== -1) {
       const folder = userFolderList[folderIndex];
       
-      if (name && name !== folder.name) {
-        if (userFolderList.some(f => f.name === name && f.id !== nodeId)) {
+      if (name && name.trim() !== folder.name) {
+        // Check if new name already exists
+        if (userFolderList.some(f => f.name === name.trim() && f !== folder)) {
           return res.status(409).json({ success: false, error: 'Folder name already exists' });
         }
-        folder.name = name;
+        folder.name = name.trim();
       }
       
-      if (contents !== undefined) {
-        folder.contents = contents;
+      if (owner) {
+        folder.owner = owner;
       }
       
       folder.updatedAt = new Date();
       userFolderList[folderIndex] = folder;
       userFolders.set(targetUser.id, userFolderList);
       
-      return res.json({ success: true });
+      return res.json({
+        success: true,
+        node: {
+          name: folder.name,
+          isDirectory: true,
+          lastModified: new Date(folder.updatedAt).toISOString(),
+          owner: folder.owner || targetUsername,
+          createdAt: new Date(folder.createdAt).toISOString()
+        }
+      });
     }
     
-    res.status(404).json({ success: false, error: 'Node not found' });
+    res.status(404).json({ success: false, error: 'File or directory not found' });
   } catch (error) {
-    console.error('Node update error:', error);
+    console.error('Update file error:', error);
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
 
-// DELETE /api/v1/filesystem/:username/:node_id(/:node_id)*
-app.delete('/api/v1/filesystem/:username/:node_ids(*)', requireAuth, requireUsername, (req, res) => {
+// PATCH /api/v1/filesystem/:username/:path - Move file or directory
+app.patch('/api/v1/filesystem/:username/:path', requireAuth, requireUsername, (req, res) => {
   try {
     const targetUsername = req.params.username;
-    const nodeIds = req.params.node_ids.split('/').filter(id => id);
+    const currentPath = req.params.path;
+    const { newPath, newName } = req.body;
     
+    // Check if user can access this username's files
+    if (targetUsername !== req.username && req.user.email !== 'admin@bdpadrive.com') {
+      return res.status(403).json({ success: false, error: 'Access denied' });
+    }
+    
+    const targetUser = Array.from(users.values()).find(u => u.email === targetUsername);
+    if (!targetUser) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+    
+    if (!newPath && !newName) {
+      return res.status(400).json({ success: false, error: 'Either newPath or newName must be provided' });
+    }
+    
+    const userFileList = userFiles.get(targetUser.id) || [];
+    const userFolderList = userFolders.get(targetUser.id) || [];
+    
+    // Look for file first
+    const fileIndex = userFileList.findIndex(f => f.name === currentPath);
+    if (fileIndex !== -1) {
+      const file = userFileList[fileIndex];
+      const finalName = newName || (newPath ? newPath.split('/').pop() : file.name);
+      
+      // Check if new name already exists
+      if (userFileList.some(f => f.name === finalName && f !== file)) {
+        return res.status(409).json({ success: false, error: 'File name already exists' });
+      }
+      
+      // Update file name/path
+      file.name = finalName;
+      file.updatedAt = new Date();
+      userFileList[fileIndex] = file;
+      userFiles.set(targetUser.id, userFileList);
+      
+      return res.json({
+        success: true,
+        message: 'File moved successfully',
+        node: {
+          name: file.name,
+          isDirectory: false,
+          size: file.size || 0,
+          mimeType: file.mimeType || 'text/plain',
+          lastModified: new Date(file.updatedAt).toISOString(),
+          content: file.content || '',
+          owner: file.owner || targetUsername,
+          createdAt: new Date(file.createdAt).toISOString(),
+          tags: file.tags || []
+        }
+      });
+    }
+    
+    // Look for folder
+    const folderIndex = userFolderList.findIndex(f => f.name === currentPath);
+    if (folderIndex !== -1) {
+      const folder = userFolderList[folderIndex];
+      const finalName = newName || (newPath ? newPath.split('/').pop() : folder.name);
+      
+      // Check if new name already exists
+      if (userFolderList.some(f => f.name === finalName && f !== folder)) {
+        return res.status(409).json({ success: false, error: 'Folder name already exists' });
+      }
+      
+      // Update folder name/path
+      folder.name = finalName;
+      folder.updatedAt = new Date();
+      userFolderList[folderIndex] = folder;
+      userFolders.set(targetUser.id, userFolderList);
+      
+      return res.json({
+        success: true,
+        message: 'Directory moved successfully',
+        node: {
+          name: folder.name,
+          isDirectory: true,
+          lastModified: new Date(folder.updatedAt).toISOString(),
+          owner: folder.owner || targetUsername,
+          createdAt: new Date(folder.createdAt).toISOString(),
+          children: []
+        }
+      });
+    }
+    
+    res.status(404).json({ success: false, error: 'File or directory not found' });
+  } catch (error) {
+    console.error('Move file error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+// DELETE /api/v1/filesystem/:username/:path
+app.delete('/api/v1/filesystem/:username/:path', requireAuth, requireUsername, (req, res) => {
+  try {
+    const targetUsername = req.params.username;
+    const path = req.params.path;
+    
+    // Check if user can access this username's files
     if (targetUsername !== req.username && req.user.email !== 'admin@bdpadrive.com') {
       return res.status(403).json({ success: false, error: 'Access denied' });
     }
@@ -850,35 +1277,33 @@ app.delete('/api/v1/filesystem/:username/:node_ids(*)', requireAuth, requireUser
     const userFileList = userFiles.get(targetUser.id) || [];
     const userFolderList = userFolders.get(targetUser.id) || [];
     
-    let deletedCount = 0;
-    
-    nodeIds.forEach(nodeId => {
-      // Try to delete file
-      const fileIndex = userFileList.findIndex(f => f.id === nodeId);
-      if (fileIndex !== -1) {
-        userFileList.splice(fileIndex, 1);
-        deletedCount++;
-        return;
-      }
+    // Look for file first
+    const fileIndex = userFileList.findIndex(f => f.name === path);
+    if (fileIndex !== -1) {
+      const deletedFile = userFileList.splice(fileIndex, 1)[0];
+      userFiles.set(targetUser.id, userFileList);
       
-      // Try to delete folder
-      const folderIndex = userFolderList.findIndex(f => f.id === nodeId);
-      if (folderIndex !== -1) {
-        userFolderList.splice(folderIndex, 1);
-        deletedCount++;
-      }
-    });
-    
-    userFiles.set(targetUser.id, userFileList);
-    userFolders.set(targetUser.id, userFolderList);
-    
-    if (deletedCount === 0) {
-      return res.status(404).json({ success: false, error: 'Node(s) not found' });
+      return res.json({
+        success: true,
+        message: 'File deleted successfully'
+      });
     }
     
-    res.json({ success: true });
+    // Look for folder
+    const folderIndex = userFolderList.findIndex(f => f.name === path);
+    if (folderIndex !== -1) {
+      const deletedFolder = userFolderList.splice(folderIndex, 1)[0];
+      userFolders.set(targetUser.id, userFolderList);
+      
+      return res.json({
+        success: true,
+        message: 'Directory deleted successfully'
+      });
+    }
+    
+    res.status(404).json({ success: false, error: 'File or directory not found' });
   } catch (error) {
-    console.error('Node deletion error:', error);
+    console.error('Delete file error:', error);
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
@@ -1227,6 +1652,202 @@ app.delete('/api/folders/:id', requireAuth, (req, res) => {
   }
 });
 
+// Helper function to generate file preview
+const generateFilePreview = (file) => {
+  const preview = {
+    id: file.id,
+    name: file.name,
+    type: file.type || 'document',
+    size: file.size || 0,
+    mimeType: file.mimeType || 'text/plain',
+    createdAt: file.createdAt,
+    updatedAt: file.updatedAt,
+    owner: file.owner,
+    tags: file.tags || [],
+    previewContent: null,
+    previewType: 'text'
+  };
+  
+  const content = file.content || '';
+  
+  // Determine preview type and generate preview content
+  if (file.mimeType === 'text/markdown' || file.name.endsWith('.md')) {
+    // Generate Markdown preview (simplified HTML representation)
+    preview.previewType = 'markdown';
+    preview.previewContent = generateMarkdownPreview(content);
+  } else if (file.mimeType === 'text/plain' || file.name.endsWith('.txt')) {
+    // Generate text preview (first few lines)
+    preview.previewType = 'text';
+    preview.previewContent = generateTextPreview(content);
+  } else if (file.mimeType === 'application/json' || file.name.endsWith('.json')) {
+    // Generate JSON preview (formatted)
+    preview.previewType = 'json';
+    preview.previewContent = generateJsonPreview(content);
+  } else if (file.type === 'symlink') {
+    // Generate symlink preview
+    preview.previewType = 'symlink';
+    preview.previewContent = `Symlink → ${file.symlinkTarget || 'Unknown target'}`;
+  } else {
+    // Default text preview
+    preview.previewType = 'text';
+    preview.previewContent = generateTextPreview(content);
+  }
+  
+  return preview;
+};
+
+const generateMarkdownPreview = (content) => {
+  if (!content || content.length === 0) {
+    return '<p><em>Empty document</em></p>';
+  }
+  
+  // Simple Markdown to HTML conversion (basic implementation)
+  let preview = content.substring(0, 300); // Limit to first 300 chars
+  
+  // Convert basic Markdown syntax
+  preview = preview
+    .replace(/^# (.*$)/gm, '<h1>$1</h1>')
+    .replace(/^## (.*$)/gm, '<h2>$1</h2>')
+    .replace(/^### (.*$)/gm, '<h3>$1</h3>')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+    .replace(/`(.*?)`/g, '<code>$1</code>')
+    .replace(/^\- (.*$)/gm, '<li>$1</li>')
+    .replace(/\n/g, '<br>');
+  
+  // Wrap list items
+  preview = preview.replace(/(<li>.*?<\/li>)/g, '<ul>$1</ul>');
+  
+  // Add ellipsis if content was truncated
+  if (content.length > 300) {
+    preview += '<br><em>...</em>';
+  }
+  
+  return preview;
+};
+
+const generateTextPreview = (content) => {
+  if (!content || content.length === 0) {
+    return 'Empty document';
+  }
+  
+  // Get first 3 lines or 200 characters, whichever is shorter
+  const lines = content.split('\n').slice(0, 3);
+  let preview = lines.join('\n');
+  
+  if (preview.length > 200) {
+    preview = preview.substring(0, 200) + '...';
+  } else if (content.split('\n').length > 3) {
+    preview += '\n...';
+  }
+  
+  return preview;
+};
+
+const generateJsonPreview = (content) => {
+  if (!content || content.length === 0) {
+    return 'Empty JSON';
+  }
+  
+  try {
+    const parsed = JSON.parse(content);
+    const formatted = JSON.stringify(parsed, null, 2);
+    
+    // Limit to first 300 characters
+    if (formatted.length > 300) {
+      return formatted.substring(0, 300) + '\n...';
+    }
+    
+    return formatted;
+  } catch (error) {
+    // If not valid JSON, treat as text
+    return generateTextPreview(content);
+  }
+};
+
+// GET /api/v1/filesystem/:username/:path
+app.get('/api/v1/filesystem/:username/:path', requireAuth, requireUsername, (req, res) => {
+  try {
+    const targetUsername = req.params.username;
+    const path = req.params.path;
+    const { preview } = req.query;
+    
+    // Check if user can access this username's files
+    if (targetUsername !== req.username && req.user.email !== 'admin@bdpadrive.com') {
+      return res.status(403).json({ success: false, error: 'Access denied' });
+    }
+    
+    const targetUser = Array.from(users.values()).find(u => u.email === targetUsername);
+    if (!targetUser) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+    
+    const userFileList = userFiles.get(targetUser.id) || [];
+    const userFolderList = userFolders.get(targetUser.id) || [];
+    
+    // Look for file first
+    const file = userFileList.find(f => f.name === path);
+    if (file) {
+      const node = {
+        name: file.name,
+        isDirectory: false,
+        size: file.size || 0,
+        mimeType: file.mimeType || 'text/plain',
+        lastModified: new Date(file.updatedAt || file.createdAt).toISOString(),
+        content: file.content || '',
+        owner: file.owner || targetUsername,
+        createdAt: new Date(file.createdAt).toISOString(),
+        tags: file.tags || []
+      };
+      
+      // Add symlink-specific properties
+      if (file.type === 'symlink') {
+        node.isSymlink = true;
+        node.symlinkTarget = file.symlinkTarget;
+        const validation = validateSymlinkTarget(file.symlinkTarget, userFileList, userFolderList);
+        node.symlinkBroken = validation.broken;
+        if (validation.broken) {
+          node.symlinkError = validation.reason;
+        }
+      }
+      
+      // Generate preview if requested
+      if (preview === 'true') {
+        const preview = generateFilePreview(file);
+        node.previewContent = preview.previewContent;
+        node.previewType = preview.previewType;
+      }
+      
+      return res.json({
+        success: true,
+        node: node
+      });
+    }
+    
+    // Look for folder
+    const folder = userFolderList.find(f => f.name === path);
+    if (folder) {
+      return res.json({
+        success: true,
+        node: {
+          name: folder.name,
+          isDirectory: true,
+          lastModified: new Date(folder.updatedAt || folder.createdAt).toISOString(),
+          owner: folder.owner || targetUsername,
+          createdAt: new Date(folder.createdAt).toISOString(),
+          children: [] // For now, flat structure
+        }
+      });
+    }
+    
+    res.status(404).json({ success: false, error: 'File or directory not found' });
+  } catch (error) {
+    console.error('Get file error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+// ================================
 // 404 handler
 app.use(async (req, res) => {
   try {

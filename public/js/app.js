@@ -5,6 +5,8 @@ class BDPADrive {
         this.currentUser = null;
         this.files = [];
         this.folders = [];
+        this.selectedItems = new Set();
+        this.currentItemProperties = null;
         this.init();
     }
 
@@ -12,6 +14,7 @@ class BDPADrive {
         this.bindEvents();
         this.loadUserData();
         this.initializeSearch();
+        this.initializePreviewMode();
     }
 
     bindEvents() {
@@ -79,6 +82,11 @@ class BDPADrive {
                 const fileElement = btn.closest('.file-item, .folder-item');
                 this.handleRenameFile(fileName, fileElement);
             }
+        });
+
+        // Content size monitoring for new documents
+        document.getElementById('itemDescription')?.addEventListener('input', (e) => {
+            this.enforceContentLimit(e.target);
         });
     }
 
@@ -243,45 +251,73 @@ class BDPADrive {
         document.getElementById('createForm').style.display = 'block';
         document.getElementById('createBtn').style.display = 'inline-block';
         
-        // Show description field for documents
+        // Show/hide relevant fields
         const descriptionField = document.getElementById('descriptionField');
-        if (descriptionField) {
-            descriptionField.style.display = type === 'document' ? 'block' : 'none';
-        }
-
-        // Update form labels
-        const itemName = document.getElementById('itemName');
-        if (itemName) {
-            itemName.placeholder = type === 'document' ? 'Enter document name...' : 'Enter folder name...';
-        }
-
-        // Hide the type selection cards
-        document.querySelectorAll('.create-option').forEach(card => {
-            card.style.opacity = '0.5';
-            card.style.pointerEvents = 'none';
-        });
+        const symlinkTargetField = document.getElementById('symlinkTargetField');
+        const tagsField = document.getElementById('tagsField');
+        
+        descriptionField.style.display = type === 'document' ? 'block' : 'none';
+        symlinkTargetField.style.display = type === 'symlink' ? 'block' : 'none';
+        tagsField.style.display = type === 'document' ? 'block' : 'none';
+        
+        // Update modal title
+        const typeNames = {
+            document: 'Document',
+            folder: 'Folder',
+            symlink: 'Symbolic Link'
+        };
+        document.querySelector('#createModal .modal-title').textContent = `Create New ${typeNames[type]}`;
     }
 
-    resetCreateForm() {
-        document.getElementById('createForm').style.display = 'none';
-        document.getElementById('createBtn').style.display = 'none';
-        document.getElementById('newItemForm')?.reset();
+    enforceContentLimit(textarea) {
+        const maxBytes = 10240; // 10KB
+        const content = textarea.value;
+        const byteLength = new Blob([content]).size;
         
-        // Show the type selection cards
-        document.querySelectorAll('.create-option').forEach(card => {
-            card.style.opacity = '1';
-            card.style.pointerEvents = 'auto';
-        });
+        if (byteLength > maxBytes) {
+            // Truncate content to fit within limit
+            let truncated = content;
+            while (new Blob([truncated]).size > maxBytes) {
+                truncated = truncated.slice(0, -1);
+            }
+            textarea.value = truncated;
+            this.showToast('Content truncated to 10KB limit', 'warning');
+        }
+        
+        // Update byte counter if element exists
+        const counter = document.getElementById('contentCounter');
+        if (counter) {
+            counter.textContent = `${byteLength}/${maxBytes} bytes`;
+            counter.className = byteLength > maxBytes ? 'text-danger' : 'text-muted';
+        }
     }
 
     async createItem() {
         const type = document.getElementById('itemType').value;
         const name = document.getElementById('itemName').value.trim();
         const description = document.getElementById('itemDescription')?.value.trim() || '';
+        const symlinkTarget = document.getElementById('symlinkTarget')?.value.trim() || '';
+        const tagsInput = document.getElementById('itemTags')?.value.trim() || '';
 
         if (!name) {
             this.showToast('Name is required', 'warning');
             return;
+        }
+
+        // Validate and parse tags
+        let tags = [];
+        if (tagsInput) {
+            tags = this.parseTags(tagsInput);
+            if (tags === null) return; // Validation failed
+        }
+
+        // Enforce content limit for documents
+        if (type === 'document' && description) {
+            const byteLength = new Blob([description]).size;
+            if (byteLength > 10240) {
+                this.showToast('Content exceeds 10KB limit', 'error');
+                return;
+            }
         }
 
         try {
@@ -298,7 +334,10 @@ class BDPADrive {
                 name: name,
                 isDirectory: type === 'folder',
                 content: type === 'document' ? description : undefined,
-                mimeType: type === 'document' ? 'text/plain' : undefined
+                mimeType: type === 'document' ? 'text/plain' : undefined,
+                type: type,
+                tags: tags.length > 0 ? tags : undefined,
+                symlinkTarget: type === 'symlink' ? symlinkTarget : undefined
             };
 
             // Use v1 API to create file/folder
@@ -311,15 +350,7 @@ class BDPADrive {
             });
 
             if (response.ok) {
-                const newItem = await response.json();
-                
-                // Close modal
-                const modal = bootstrap.Modal.getInstance(document.getElementById('createModal'));
-                modal.hide();
-                
-                this.showToast(`${type === 'document' ? 'Document' : 'Folder'} created successfully!`, 'success');
-                
-                // Refresh the page to show the new item
+                this.showToast(`${type === 'folder' ? 'Folder' : type === 'symlink' ? 'Symlink' : 'Document'} created successfully!`, 'success');
                 setTimeout(() => {
                     window.location.reload();
                 }, 1000);
@@ -331,18 +362,55 @@ class BDPADrive {
             console.error('Create item error:', error);
             this.showToast(`Failed to create ${type}`, 'error');
         }
+
+        // Hide modal
+        const modal = bootstrap.Modal.getInstance(document.getElementById('createModal'));
+        modal.hide();
+    }
+
+    parseTags(tagsInput) {
+        const tags = tagsInput.split(',').map(tag => tag.trim()).filter(tag => tag);
+        
+        if (tags.length > 5) {
+            this.showToast('Maximum 5 tags allowed', 'warning');
+            return null;
+        }
+        
+        // Validate alphanumeric tags
+        const alphanumericRegex = /^[a-zA-Z0-9]+$/;
+        for (const tag of tags) {
+            if (!alphanumericRegex.test(tag)) {
+                this.showToast(`Tag "${tag}" must be alphanumeric only`, 'warning');
+                return null;
+            }
+        }
+        
+        // Convert to lowercase for case-insensitive handling
+        return tags.map(tag => tag.toLowerCase());
     }
 
     toggleViewMode(viewMode) {
         const gridView = document.getElementById('gridViewContainer');
         const listView = document.getElementById('listViewContainer');
+        const previewView = document.getElementById('previewViewContainer');
 
-        if (viewMode === 'gridView') {
-            gridView.style.display = 'block';
-            listView.style.display = 'none';
-        } else {
-            gridView.style.display = 'none';
-            listView.style.display = 'block';
+        // Hide all views
+        gridView.style.display = 'none';
+        listView.style.display = 'none';
+        previewView.style.display = 'none';
+
+        // Show selected view
+        switch(viewMode) {
+            case 'gridView':
+                gridView.style.display = 'block';
+                break;
+            case 'listView':
+                listView.style.display = 'block';
+                break;
+            case 'previewView':
+                previewView.style.display = 'block';
+                this.loadPreviewView();
+                break;
         }
     }
 
@@ -361,8 +429,10 @@ class BDPADrive {
                 switch (sortBy) {
                     case 'name':
                         return a.dataset.name.localeCompare(b.dataset.name);
-                    case 'date':
-                        return new Date(parseInt(b.dataset.date)) - new Date(parseInt(a.dataset.date));
+                    case 'createdAt':
+                        return new Date(parseInt(b.dataset.created)) - new Date(parseInt(a.dataset.created));
+                    case 'modifiedAt':
+                        return new Date(parseInt(b.dataset.modified)) - new Date(parseInt(a.dataset.modified));
                     case 'size':
                         return (parseInt(b.dataset.size) || 0) - (parseInt(a.dataset.size) || 0);
                     case 'type':
@@ -385,77 +455,107 @@ class BDPADrive {
             items.forEach(item => {
                 const itemType = item.dataset.type;
                 const show = filterType === 'all' || 
-                           (filterType === 'document' && itemType === 'document') ||
-                           (filterType === 'folder' && itemType === 'folder');
+                           (filterType === 'document' && (itemType === 'document' || itemType === 'file')) ||
+                           (filterType === 'folder' && itemType === 'folder') ||
+                           (filterType === 'symlink' && itemType === 'symlink');
                 
                 item.style.display = show ? '' : 'none';
             });
         });
     }
 
-    escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+    initializePreviewMode() {
+        // Initialize file preview functionality
+        this.previewCache = new Map();
     }
 
-    showToast(message, type = 'info') {
-        // Create toast container if it doesn't exist
-        let toastContainer = document.getElementById('toastContainer');
-        if (!toastContainer) {
-            toastContainer = document.createElement('div');
-            toastContainer.id = 'toastContainer';
-            toastContainer.className = 'toast-container position-fixed top-0 end-0 p-3';
-            toastContainer.style.zIndex = '1055';
-            document.body.appendChild(toastContainer);
+    async loadPreviewView() {
+        const previewGrid = document.getElementById('previewGrid');
+        if (!previewGrid) return;
+
+        previewGrid.innerHTML = '<div class="col-12 text-center"><div class="spinner-border" role="status"></div><p>Loading previews...</p></div>';
+
+        try {
+            const userResponse = await fetch('/api/user/me');
+            const userData = await userResponse.json();
+            
+            if (!userData.username) {
+                previewGrid.innerHTML = '<div class="col-12 alert alert-warning">Authentication required</div>';
+                return;
+            }
+
+            // Get all files for preview
+            const response = await fetch(`/api/v1/filesystem/${userData.username}`);
+            if (!response.ok) {
+                throw new Error('Failed to load files');
+            }
+
+            const data = await response.json();
+            const files = data.nodes || [];
+            
+            let html = '';
+            for (const file of files.filter(f => f.type === 'file')) {
+                const preview = await this.generateFilePreview(file);
+                html += this.renderPreviewCard(file, preview);
+            }
+
+            previewGrid.innerHTML = html || '<div class="col-12 alert alert-info">No files to preview</div>';
+        } catch (error) {
+            console.error('Preview loading error:', error);
+            previewGrid.innerHTML = '<div class="col-12 alert alert-danger">Failed to load previews</div>';
+        }
+    }
+
+    async generateFilePreview(file) {
+        if (this.previewCache.has(file.node_id)) {
+            return this.previewCache.get(file.node_id);
         }
 
-        // Create toast element
-        const toastId = 'toast-' + Date.now();
-        const toastHtml = `
-            <div id="${toastId}" class="toast" role="alert" aria-live="assertive" aria-atomic="true">
-                <div class="toast-header">
-                    <i class="bi bi-${this.getToastIcon(type)} text-${this.getToastColor(type)} me-2"></i>
-                    <strong class="me-auto">BDPADrive</strong>
-                    <button type="button" class="btn-close" data-bs-dismiss="toast"></button>
-                </div>
-                <div class="toast-body">
-                    ${message}
+        try {
+            // Get file content for preview
+            const content = file.text || '';
+            const preview = {
+                type: 'text',
+                content: content.substring(0, 200) + (content.length > 200 ? '...' : ''),
+                hasMoreContent: content.length > 200
+            };
+
+            this.previewCache.set(file.node_id, preview);
+            return preview;
+        } catch (error) {
+            console.error('Preview generation error:', error);
+            return { type: 'error', content: 'Preview unavailable' };
+        }
+    }
+
+    renderPreviewCard(file, preview) {
+        const tags = file.tags ? file.tags.map(tag => `<span class="badge bg-secondary me-1">${tag}</span>`).join('') : '';
+        const sizeWarning = file.size > 10240 ? '<i class="bi bi-exclamation-triangle text-warning" title="Exceeds 10KB limit"></i>' : '';
+        
+        return `
+            <div class="col-lg-4 col-md-6 mb-4">
+                <div class="card h-100 border-0 shadow-sm">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h6 class="mb-0 text-truncate">${file.name} ${sizeWarning}</h6>
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-outline-primary btn-sm" onclick="editFile('${file.node_id}')">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="preview-content mb-3" style="height: 120px; overflow-y: auto; background: #f8f9fa; padding: 10px; border-radius: 4px; font-family: monospace; font-size: 0.85rem;">
+                            ${preview.content}
+                        </div>
+                        ${tags ? `<div class="mb-2">${tags}</div>` : ''}
+                        <small class="text-muted">
+                            <div>Size: ${Math.round((file.size || 0) / 1024)}KB</div>
+                            <div>Modified: ${new Date(file.modifiedAt).toLocaleDateString()}</div>
+                        </small>
+                    </div>
                 </div>
             </div>
         `;
-
-        toastContainer.insertAdjacentHTML('beforeend', toastHtml);
-        
-        const toastElement = document.getElementById(toastId);
-        const toast = new bootstrap.Toast(toastElement, { delay: 3000 });
-        
-        toast.show();
-        
-        // Remove toast element after it's hidden
-        toastElement.addEventListener('hidden.bs.toast', () => {
-            toastElement.remove();
-        });
-    }
-
-    getToastIcon(type) {
-        const icons = {
-            success: 'check-circle-fill',
-            error: 'exclamation-triangle-fill',
-            warning: 'exclamation-triangle-fill',
-            info: 'info-circle-fill'
-        };
-        return icons[type] || icons.info;
-    }
-
-    getToastColor(type) {
-        const colors = {
-            success: 'success',
-            error: 'danger',
-            warning: 'warning',
-            info: 'primary'
-        };
-        return colors[type] || colors.info;
     }
 
     // V1 API Methods for File Management
@@ -816,6 +916,336 @@ async function deleteItem(type, id) {
             bdpaDrive.showToast(`Failed to delete ${type}`, 'error');
         }
     }
+}
+
+// New enhanced functions
+
+async function showItemPropertiesModal(type, id) {
+    try {
+        const userResponse = await fetch('/api/user/me');
+        const userData = await userResponse.json();
+        
+        if (!userData.username) {
+            bdpaDrive.showToast('Authentication required', 'error');
+            return;
+        }
+
+        // Get item details using v1 API
+        const response = await fetch(`/api/v1/filesystem/${userData.username}/${id}`);
+        if (!response.ok) {
+            throw new Error('Failed to load item details');
+        }
+
+        const item = await response.json();
+        bdpaDrive.currentItemProperties = { type, id, ...item };
+        
+        const modal = new bootstrap.Modal(document.getElementById('itemPropertiesModal'));
+        const content = document.getElementById('itemPropertiesContent');
+        
+        content.innerHTML = renderItemPropertiesForm(item, type);
+        modal.show();
+    } catch (error) {
+        console.error('Error loading item properties:', error);
+        bdpaDrive.showToast('Failed to load item properties', 'error');
+    }
+}
+
+function renderItemPropertiesForm(item, type) {
+    const isFile = type === 'file';
+    const isSymlink = item.type === 'symlink';
+    const tags = item.tags || [];
+    
+    return `
+        <form id="itemPropertiesForm">
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label class="form-label">Name</label>
+                        <input type="text" class="form-control" id="propName" value="${item.name}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Type</label>
+                        <input type="text" class="form-control" value="${type === 'file' ? (isSymlink ? 'Symbolic Link' : 'Document') : 'Folder'}" readonly>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Owner</label>
+                        <input type="text" class="form-control" id="propOwner" value="${item.owner || 'Current User'}">
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="mb-3">
+                        <label class="form-label">Size</label>
+                        <input type="text" class="form-control" value="${Math.round((item.size || 0) / 1024)} KB (${item.size || 0} bytes)" readonly>
+                        ${item.size > 10240 ? '<div class="text-warning small"><i class="bi bi-exclamation-triangle"></i> Exceeds 10KB limit</div>' : ''}
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Created</label>
+                        <input type="text" class="form-control" value="${new Date(item.createdAt).toLocaleString()}" readonly>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Modified</label>
+                        <input type="text" class="form-control" value="${new Date(item.modifiedAt).toLocaleString()}" readonly>
+                    </div>
+                </div>
+            </div>
+            
+            ${isFile ? `
+                <div class="mb-3">
+                    <label class="form-label">Tags (max 5 alphanumeric tags)</label>
+                    <input type="text" class="form-control" id="propTags" value="${tags.join(', ')}" placeholder="tag1, tag2, tag3">
+                    <div class="form-text">Separate tags with commas. Only alphanumeric characters allowed.</div>
+                </div>
+            ` : ''}
+            
+            ${isSymlink ? `
+                <div class="mb-3">
+                    <label class="form-label">Target Path</label>
+                    <input type="text" class="form-control" id="propSymlinkTarget" value="${item.symlinkTarget || ''}" placeholder="Path to target">
+                    <div class="form-text">The file or folder this symlink points to</div>
+                </div>
+            ` : ''}
+            
+            ${isFile && !isSymlink ? `
+                <div class="mb-3">
+                    <label class="form-label">Content Preview</label>
+                    <textarea class="form-control" rows="4" readonly style="font-family: monospace; font-size: 0.9rem;">${(item.text || '').substring(0, 500)}${(item.text || '').length > 500 ? '\n\n... (truncated)' : ''}</textarea>
+                </div>
+            ` : ''}
+        </form>
+    `;
+}
+
+async function saveItemProperties() {
+    try {
+        const form = document.getElementById('itemPropertiesForm');
+        const formData = new FormData(form);
+        
+        const userResponse = await fetch('/api/user/me');
+        const userData = await userResponse.json();
+        
+        if (!userData.username) {
+            bdpaDrive.showToast('Authentication required', 'error');
+            return;
+        }
+
+        const updates = {
+            name: document.getElementById('propName').value.trim(),
+            owner: document.getElementById('propOwner').value.trim()
+        };
+
+        // Handle tags for files
+        const tagsInput = document.getElementById('propTags');
+        if (tagsInput) {
+            const tags = bdpaDrive.parseTags(tagsInput.value);
+            if (tags === null) return; // Validation failed
+            updates.tags = tags;
+        }
+
+        // Handle symlink target
+        const symlinkTargetInput = document.getElementById('propSymlinkTarget');
+        if (symlinkTargetInput) {
+            updates.symlinkTarget = symlinkTargetInput.value.trim();
+        }
+
+        const response = await fetch(`/api/v1/filesystem/${userData.username}/${bdpaDrive.currentItemProperties.id}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(updates)
+        });
+
+        if (response.ok) {
+            bdpaDrive.showToast('Properties updated successfully', 'success');
+            const modal = bootstrap.Modal.getInstance(document.getElementById('itemPropertiesModal'));
+            modal.hide();
+            setTimeout(() => window.location.reload(), 1000);
+        } else {
+            const error = await response.json();
+            bdpaDrive.showToast(error.error || 'Failed to update properties', 'error');
+        }
+    } catch (error) {
+        console.error('Error saving properties:', error);
+        bdpaDrive.showToast('Failed to save properties', 'error');
+    }
+}
+
+// Bulk operations
+function toggleSelectAll(checkbox) {
+    const checkboxes = document.querySelectorAll('input[name="itemSelect"]');
+    checkboxes.forEach(cb => cb.checked = checkbox.checked);
+    
+    if (checkbox.checked) {
+        checkboxes.forEach(cb => bdpaDrive.selectedItems.add(cb.value));
+    } else {
+        bdpaDrive.selectedItems.clear();
+    }
+}
+
+function getSelectedItems() {
+    const selected = [];
+    const checkboxes = document.querySelectorAll('input[name="itemSelect"]:checked');
+    checkboxes.forEach(cb => {
+        selected.push({
+            id: cb.value,
+            type: cb.dataset.type
+        });
+    });
+    return selected;
+}
+
+async function bulkDelete() {
+    const selectedItems = getSelectedItems();
+    if (selectedItems.length === 0) {
+        bdpaDrive.showToast('No items selected', 'warning');
+        return;
+    }
+
+    if (confirm(`Are you sure you want to delete ${selectedItems.length} selected items?`)) {
+        try {
+            const userResponse = await fetch('/api/user/me');
+            const userData = await userResponse.json();
+            
+            if (!userData.username) {
+                bdpaDrive.showToast('Authentication required', 'error');
+                return;
+            }
+
+            let deletedCount = 0;
+            for (const item of selectedItems) {
+                try {
+                    const response = await fetch(`/api/v1/filesystem/${userData.username}/${item.id}`, {
+                        method: 'DELETE'
+                    });
+                    if (response.ok) deletedCount++;
+                } catch (error) {
+                    console.error(`Failed to delete ${item.id}:`, error);
+                }
+            }
+
+            bdpaDrive.showToast(`Deleted ${deletedCount} of ${selectedItems.length} items`, deletedCount > 0 ? 'success' : 'warning');
+            if (deletedCount > 0) {
+                setTimeout(() => window.location.reload(), 1500);
+            }
+        } catch (error) {
+            console.error('Bulk delete error:', error);
+            bdpaDrive.showToast('Bulk delete failed', 'error');
+        }
+
+        const modal = bootstrap.Modal.getInstance(document.getElementById('bulkActionsModal'));
+        modal.hide();
+    }
+}
+
+async function bulkChangeOwner() {
+    const selectedItems = getSelectedItems();
+    if (selectedItems.length === 0) {
+        bdpaDrive.showToast('No items selected', 'warning');
+        return;
+    }
+
+    const newOwner = prompt(`Enter new owner for ${selectedItems.length} selected items:`);
+    if (!newOwner || !newOwner.trim()) {
+        return;
+    }
+
+    try {
+        const userResponse = await fetch('/api/user/me');
+        const userData = await userResponse.json();
+        
+        if (!userData.username) {
+            bdpaDrive.showToast('Authentication required', 'error');
+            return;
+        }
+
+        let updatedCount = 0;
+        for (const item of selectedItems) {
+            try {
+                const response = await fetch(`/api/v1/filesystem/${userData.username}/${item.id}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ owner: newOwner.trim() })
+                });
+                if (response.ok) updatedCount++;
+            } catch (error) {
+                console.error(`Failed to update owner for ${item.id}:`, error);
+            }
+        }
+
+        bdpaDrive.showToast(`Updated owner for ${updatedCount} of ${selectedItems.length} items`, updatedCount > 0 ? 'success' : 'warning');
+        if (updatedCount > 0) {
+            setTimeout(() => window.location.reload(), 1500);
+        }
+    } catch (error) {
+        console.error('Bulk change owner error:', error);
+        bdpaDrive.showToast('Bulk change owner failed', 'error');
+    }
+
+    const modal = bootstrap.Modal.getInstance(document.getElementById('bulkActionsModal'));
+    modal.hide();
+}
+
+async function bulkAddTags() {
+    const selectedItems = getSelectedItems().filter(item => item.type === 'file');
+    if (selectedItems.length === 0) {
+        bdpaDrive.showToast('No files selected', 'warning');
+        return;
+    }
+
+    const tagsInput = prompt(`Enter tags to add to ${selectedItems.length} selected files (comma-separated):`);
+    if (!tagsInput || !tagsInput.trim()) {
+        return;
+    }
+
+    const tags = bdpaDrive.parseTags(tagsInput);
+    if (tags === null) return; // Validation failed
+
+    try {
+        const userResponse = await fetch('/api/user/me');
+        const userData = await userResponse.json();
+        
+        if (!userData.username) {
+            bdpaDrive.showToast('Authentication required', 'error');
+            return;
+        }
+
+        let updatedCount = 0;
+        for (const item of selectedItems) {
+            try {
+                // Get current file to merge tags
+                const getResponse = await fetch(`/api/v1/filesystem/${userData.username}/${item.id}`);
+                if (getResponse.ok) {
+                    const fileData = await getResponse.json();
+                    const currentTags = fileData.tags || [];
+                    const mergedTags = [...new Set([...currentTags, ...tags])].slice(0, 5); // Dedupe and limit to 5
+
+                    const putResponse = await fetch(`/api/v1/filesystem/${userData.username}/${item.id}`, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ tags: mergedTags })
+                    });
+                    if (putResponse.ok) updatedCount++;
+                }
+            } catch (error) {
+                console.error(`Failed to add tags to ${item.id}:`, error);
+            }
+        }
+
+        bdpaDrive.showToast(`Added tags to ${updatedCount} of ${selectedItems.length} files`, updatedCount > 0 ? 'success' : 'warning');
+        if (updatedCount > 0) {
+            setTimeout(() => window.location.reload(), 1500);
+        }
+    } catch (error) {
+        console.error('Bulk add tags error:', error);
+        bdpaDrive.showToast('Bulk add tags failed', 'error');
+    }
+
+    const modal = bootstrap.Modal.getInstance(document.getElementById('bulkActionsModal'));
+    modal.hide();
 }
 
 // Initialize BDPADrive when DOM is loaded
