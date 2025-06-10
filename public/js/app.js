@@ -88,6 +88,43 @@ class BDPADrive {
         document.getElementById('itemDescription')?.addEventListener('input', (e) => {
             this.enforceContentLimit(e.target);
         });
+
+        // Dashboard-specific initialization
+        this.initializeDashboard();
+    }
+
+    initializeDashboard() {
+        // Load storage information on dashboard
+        if (document.getElementById('storageUsed')) {
+            this.updateStorageDisplay();
+        }
+
+        // Delete confirmation input validation
+        const deleteConfirmInput = document.getElementById('deleteConfirmation');
+        const confirmDeleteBtn = document.getElementById('confirmDeleteBtn');
+        
+        if (deleteConfirmInput && confirmDeleteBtn) {
+            deleteConfirmInput.addEventListener('input', (e) => {
+                confirmDeleteBtn.disabled = e.target.value !== 'DELETE';
+            });
+        }
+
+        // Load storage info when delete modal is opened
+        const deleteModal = document.getElementById('deleteAccountModal');
+        if (deleteModal) {
+            deleteModal.addEventListener('show.bs.modal', () => {
+                this.updateStorageDisplay();
+            });
+        }
+
+        // Clear password form when modal is closed
+        const passwordModal = document.getElementById('changePasswordModal');
+        if (passwordModal) {
+            passwordModal.addEventListener('hidden.bs.modal', () => {
+                document.getElementById('changePasswordForm')?.reset();
+                document.getElementById('passwordError')?.classList.add('d-none');
+            });
+        }
     }
 
     async loadUserData() {
@@ -837,6 +874,236 @@ class BDPADrive {
             });
         }
     }
+
+    // Account Management Methods
+    
+    async loadStorageInfo() {
+        try {
+            const userResponse = await fetch('/api/user/me');
+            const userData = await userResponse.json();
+            
+            if (!userData.username) {
+                return null;
+            }
+
+            const response = await fetch(`/api/v1/users/${userData.username}/storage`);
+            if (response.ok) {
+                const data = await response.json();
+                return data.storage;
+            } else {
+                console.error('Failed to load storage info:', response.status);
+                return null;
+            }
+        } catch (error) {
+            console.error('Storage info error:', error);
+            return null;
+        }
+    }
+
+    async updateStorageDisplay() {
+        const storageElement = document.getElementById('storageUsed');
+        const deleteStorageElement = document.getElementById('deleteStorageInfo');
+        
+        if (!storageElement && !deleteStorageElement) return;
+        
+        const storage = await this.loadStorageInfo();
+        if (storage) {
+            const storageText = `${storage.totalKB} KB (${storage.fileCount} files, ${storage.folderCount} folders)`;
+            if (storageElement) storageElement.textContent = storageText;
+            if (deleteStorageElement) deleteStorageElement.textContent = storageText;
+        } else {
+            if (storageElement) storageElement.textContent = 'Unable to load';
+            if (deleteStorageElement) deleteStorageElement.textContent = 'Unable to load';
+        }
+    }
+
+    async updateProfile() {
+        const name = document.getElementById('profileName').value.trim();
+        const email = document.getElementById('profileEmail').value.trim();
+        
+        if (!name || !email) {
+            this.showToast('Please fill in all fields', 'warning');
+            return;
+        }
+
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+            this.showToast('Please enter a valid email address', 'warning');
+            return;
+        }
+
+        try {
+            const userResponse = await fetch('/api/user/me');
+            const userData = await userResponse.json();
+            
+            if (!userData.username) {
+                this.showToast('User not authenticated', 'error');
+                return;
+            }
+
+            const response = await fetch(`/api/v1/users/${userData.username}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ name, email })
+            });
+
+            if (response.ok) {
+                this.showToast('Profile updated successfully!', 'success');
+                
+                // Close modal
+                const modal = bootstrap.Modal.getInstance(document.getElementById('updateProfileModal'));
+                modal.hide();
+                
+                // Check if email changed - if so, we need to logout and re-login
+                if (email !== userData.email) {
+                    this.showToast('Email changed. Please log in again.', 'info');
+                    setTimeout(() => {
+                        this.logout();
+                    }, 2000);
+                } else {
+                    // Just reload the page to show updated info
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 1000);
+                }
+            } else {
+                const error = await response.json();
+                this.showToast(error.error || 'Failed to update profile', 'error');
+            }
+        } catch (error) {
+            console.error('Update profile error:', error);
+            this.showToast('Failed to update profile', 'error');
+        }
+    }
+
+    async changePassword() {
+        const currentPassword = document.getElementById('currentPassword').value;
+        const newPassword = document.getElementById('newPassword').value;
+        const confirmPassword = document.getElementById('confirmPassword').value;
+        const errorDiv = document.getElementById('passwordError');
+        
+        // Clear previous errors
+        errorDiv.classList.add('d-none');
+        
+        if (!currentPassword || !newPassword || !confirmPassword) {
+            errorDiv.textContent = 'Please fill in all fields';
+            errorDiv.classList.remove('d-none');
+            return;
+        }
+
+        if (newPassword.length < 8) {
+            errorDiv.textContent = 'New password must be at least 8 characters long';
+            errorDiv.classList.remove('d-none');
+            return;
+        }
+
+        if (newPassword !== confirmPassword) {
+            errorDiv.textContent = 'New passwords do not match';
+            errorDiv.classList.remove('d-none');
+            return;
+        }
+
+        try {
+            const userResponse = await fetch('/api/user/me');
+            const userData = await userResponse.json();
+            
+            if (!userData.username) {
+                this.showToast('User not authenticated', 'error');
+                return;
+            }
+
+            // First verify current password
+            const authResponse = await fetch(`/api/v1/users/${userData.username}/auth`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ password: currentPassword })
+            });
+
+            if (!authResponse.ok) {
+                errorDiv.textContent = 'Current password is incorrect';
+                errorDiv.classList.remove('d-none');
+                return;
+            }
+
+            // Update password
+            const response = await fetch(`/api/v1/users/${userData.username}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ password: newPassword })
+            });
+
+            if (response.ok) {
+                this.showToast('Password changed successfully!', 'success');
+                
+                // Close modal and clear form
+                const modal = bootstrap.Modal.getInstance(document.getElementById('changePasswordModal'));
+                modal.hide();
+                document.getElementById('changePasswordForm').reset();
+                
+            } else {
+                const error = await response.json();
+                errorDiv.textContent = error.error || 'Failed to change password';
+                errorDiv.classList.remove('d-none');
+            }
+        } catch (error) {
+            console.error('Change password error:', error);
+            errorDiv.textContent = 'Failed to change password';
+            errorDiv.classList.remove('d-none');
+        }
+    }
+
+    async deleteAccount() {
+        const confirmation = document.getElementById('deleteConfirmation').value.trim();
+        
+        if (confirmation !== 'DELETE') {
+            this.showToast('Please type DELETE to confirm', 'warning');
+            return;
+        }
+
+        try {
+            const userResponse = await fetch('/api/user/me');
+            const userData = await userResponse.json();
+            
+            if (!userData.username) {
+                this.showToast('User not authenticated', 'error');
+                return;
+            }
+
+            const response = await fetch(`/api/v1/users/${userData.username}`, {
+                method: 'DELETE'
+            });
+
+            if (response.ok) {
+                const result = await response.json();
+                this.showToast('Account deleted successfully', 'success');
+                
+                // Show deletion summary
+                const deletedData = result.deletedData;
+                this.showToast(
+                    `Deleted: ${deletedData.files} files, ${deletedData.folders} folders (${deletedData.storageKB} KB)`, 
+                    'info'
+                );
+                
+                // Redirect to auth page after a delay
+                setTimeout(() => {
+                    window.location.href = '/auth';
+                }, 3000);
+                
+            } else {
+                const error = await response.json();
+                this.showToast(error.error || 'Failed to delete account', 'error');
+            }
+        } catch (error) {
+            console.error('Delete account error:', error);
+            this.showToast('Failed to delete account', 'error');
+        }
+    }
 }
 
 // Global functions for onclick handlers
@@ -1251,4 +1518,47 @@ async function bulkAddTags() {
 // Initialize BDPADrive when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
     bdpaDrive = new BDPADrive();
+    
+    // Load storage information for dashboard
+    if (document.getElementById('storageUsed')) {
+        bdpaDrive.updateStorageDisplay();
+    }
+    
+    // Setup delete confirmation validation
+    const deleteConfirmInput = document.getElementById('deleteConfirmation');
+    const confirmDeleteBtn = document.getElementById('confirmDeleteBtn');
+    
+    if (deleteConfirmInput && confirmDeleteBtn) {
+        deleteConfirmInput.addEventListener('input', (e) => {
+            confirmDeleteBtn.disabled = e.target.value.trim() !== 'DELETE';
+        });
+    }
+    
+    // Load storage info when delete modal is shown
+    const deleteModal = document.getElementById('deleteAccountModal');
+    if (deleteModal) {
+        deleteModal.addEventListener('show.bs.modal', () => {
+            bdpaDrive.updateStorageDisplay();
+        });
+    }
 });
+
+// Account Management Functions
+
+function updateProfile() {
+    if (bdpaDrive) {
+        bdpaDrive.updateProfile();
+    }
+}
+
+function changePassword() {
+    if (bdpaDrive) {
+        bdpaDrive.changePassword();
+    }
+}
+
+function deleteAccount() {
+    if (bdpaDrive) {
+        bdpaDrive.deleteAccount();
+    }
+}

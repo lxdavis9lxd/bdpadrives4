@@ -11,27 +11,82 @@
                 
                 <!-- Advanced Search Form -->
                 <form action="/search" method="GET" class="row g-3">
-                    <div class="col-md-6">
+                    <div class="col-md-4">
                         <label for="searchQuery" class="form-label">Search Term</label>
                         <div class="input-group">
                             <span class="input-group-text"><i class="bi bi-search"></i></span>
                             <input type="text" class="form-control" id="searchQuery" name="q" value="<%= query %>" placeholder="Enter keywords...">
                         </div>
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-md-2">
                         <label for="searchType" class="form-label">Search In</label>
                         <select class="form-select" id="searchType" name="type">
-                            <option value="all">All Items</option>
-                            <option value="files">Files Only</option>
-                            <option value="folders">Folders Only</option>
+                            <option value="all" <%= type === 'all' ? 'selected' : '' %>>All Items</option>
+                            <option value="files" <%= type === 'files' ? 'selected' : '' %>>Files Only</option>
+                            <option value="folders" <%= type === 'folders' ? 'selected' : '' %>>Folders Only</option>
                         </select>
                     </div>
-                    <div class="col-md-3">
+                    <div class="col-md-2">
+                        <label for="searchDateRange" class="form-label">Date Range</label>
+                        <select class="form-select" id="searchDateRange" name="dateRange">
+                            <option value="" <%= !dateRange ? 'selected' : '' %>>Any Time</option>
+                            <option value="today" <%= dateRange === 'today' ? 'selected' : '' %>>Today</option>
+                            <option value="week" <%= dateRange === 'week' ? 'selected' : '' %>>Past Week</option>
+                            <option value="month" <%= dateRange === 'month' ? 'selected' : '' %>>Past Month</option>
+                            <option value="year" <%= dateRange === 'year' ? 'selected' : '' %>>Past Year</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label for="searchSortBy" class="form-label">Sort By</label>
+                        <select class="form-select" id="searchSortBy" name="sortBy">
+                            <option value="relevance" <%= sortBy === 'relevance' ? 'selected' : '' %>>Relevance</option>
+                            <option value="modified" <%= sortBy === 'modified' ? 'selected' : '' %>>Modified Date</option>
+                            <option value="created" <%= sortBy === 'created' ? 'selected' : '' %>>Created Date</option>
+                            <option value="name" <%= sortBy === 'name' ? 'selected' : '' %>>Name A-Z</option>
+                            <option value="size" <%= sortBy === 'size' ? 'selected' : '' %>>File Size</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
                         <label class="form-label">&nbsp;</label>
                         <div class="d-grid">
                             <button type="submit" class="btn btn-primary">
                                 <i class="bi bi-search me-2"></i>Search
                             </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Advanced Filters Toggle -->
+                    <div class="col-12">
+                        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="collapse" data-bs-target="#advancedFilters">
+                            <i class="bi bi-funnel"></i> Advanced Filters
+                        </button>
+                        
+                        <div class="collapse mt-3" id="advancedFilters">
+                            <div class="card card-body">
+                                <div class="row g-3">
+                                    <div class="col-md-3">
+                                        <label for="searchTags" class="form-label">Tags</label>
+                                        <input type="text" class="form-control" id="searchTags" name="tags" 
+                                               value="<%= tags || '' %>" placeholder="tag1, tag2, tag3">
+                                        <div class="form-text">Comma-separated tags</div>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label for="searchOwner" class="form-label">Owner</label>
+                                        <input type="text" class="form-control" id="searchOwner" name="owner" 
+                                               value="<%= owner || '' %>" placeholder="owner@example.com">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label for="searchMinSize" class="form-label">Min Size (KB)</label>
+                                        <input type="number" class="form-control" id="searchMinSize" name="minSize" 
+                                               value="<%= minSize || '' %>" min="0">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label for="searchMaxSize" class="form-label">Max Size (KB)</label>
+                                        <input type="number" class="form-control" id="searchMaxSize" name="maxSize" 
+                                               value="<%= maxSize || '' %>" min="0">
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </form>

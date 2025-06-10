@@ -70,6 +70,11 @@
                                     <i class="bi bi-person-plus me-2"></i>Sign Up
                                 </button>
                             </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="forgot-tab" data-bs-toggle="pill" data-bs-target="#forgot" type="button" role="tab">
+                                    <i class="bi bi-key me-2"></i>Forgot Password
+                                </button>
+                            </li>
                         </ul>
 
                         <!-- Auth Content -->
@@ -84,15 +89,45 @@
                                             <span class="input-group-text"><i class="bi bi-envelope"></i></span>
                                             <input type="email" class="form-control" id="signinEmail" required>
                                         </div>
+                                        <div class="invalid-feedback" id="signinEmailError"></div>
                                     </div>
-                                    <div class="mb-4">
+                                    <div class="mb-3">
                                         <label for="signinPassword" class="form-label">Password</label>
                                         <div class="input-group">
                                             <span class="input-group-text"><i class="bi bi-lock"></i></span>
                                             <input type="password" class="form-control" id="signinPassword" required>
+                                            <button type="button" class="btn btn-outline-secondary" id="toggleSigninPassword">
+                                                <i class="bi bi-eye" id="signinPasswordIcon"></i>
+                                            </button>
+                                        </div>
+                                        <div class="invalid-feedback" id="signinPasswordError"></div>
+                                    </div>
+                                    <div class="mb-3 form-check">
+                                        <input type="checkbox" class="form-check-input" id="rememberMe">
+                                        <label class="form-check-label" for="rememberMe">
+                                            Remember me for 30 days
+                                        </label>
+                                    </div>
+                                    
+                                    <!-- CAPTCHA Challenge (shown after failed attempts) -->
+                                    <div id="captchaChallenge" class="mb-3 d-none">
+                                        <label class="form-label">Security Check</label>
+                                        <div class="card border-warning">
+                                            <div class="card-body text-center">
+                                                <p class="mb-2">Please solve: <strong id="captchaQuestion"></strong></p>
+                                                <input type="number" class="form-control" id="captchaAnswer" placeholder="Enter answer">
+                                                <small class="text-muted">This helps us verify you're human</small>
+                                            </div>
                                         </div>
                                     </div>
-                                    <button type="submit" class="btn btn-primary btn-lg w-100">
+                                    
+                                    <!-- Rate limiting warning -->
+                                    <div id="rateLimitWarning" class="alert alert-warning d-none">
+                                        <i class="bi bi-exclamation-triangle me-2"></i>
+                                        <span id="rateLimitMessage"></span>
+                                    </div>
+                                    
+                                    <button type="submit" class="btn btn-primary btn-lg w-100" id="signinSubmitBtn">
                                         <i class="bi bi-box-arrow-in-right me-2"></i>Sign In
                                     </button>
                                 </form>
@@ -126,8 +161,19 @@
                                         <label for="signupName" class="form-label">Full Name</label>
                                         <div class="input-group">
                                             <span class="input-group-text"><i class="bi bi-person"></i></span>
-                                            <input type="text" class="form-control" id="signupName" required>
+                                            <input type="text" class="form-control" id="signupName" required minlength="2" maxlength="50">
                                         </div>
+                                        <div class="invalid-feedback" id="signupNameError"></div>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="signupUsername" class="form-label">Username</label>
+                                        <div class="input-group">
+                                            <span class="input-group-text"><i class="bi bi-at"></i></span>
+                                            <input type="text" class="form-control" id="signupUsername" required 
+                                                   minlength="3" maxlength="20" pattern="^[a-zA-Z0-9_]+$">
+                                        </div>
+                                        <div class="form-text">3-20 characters, letters, numbers and underscores only</div>
+                                        <div class="invalid-feedback" id="signupUsernameError"></div>
                                     </div>
                                     <div class="mb-3">
                                         <label for="signupEmail" class="form-label">Email Address</label>
@@ -135,21 +181,180 @@
                                             <span class="input-group-text"><i class="bi bi-envelope"></i></span>
                                             <input type="email" class="form-control" id="signupEmail" required>
                                         </div>
+                                        <div class="invalid-feedback" id="signupEmailError"></div>
                                     </div>
-                                    <div class="mb-4">
+                                    <div class="mb-3">
                                         <label for="signupPassword" class="form-label">Password</label>
                                         <div class="input-group">
                                             <span class="input-group-text"><i class="bi bi-lock"></i></span>
-                                            <input type="password" class="form-control" id="signupPassword" required minlength="6">
+                                            <input type="password" class="form-control" id="signupPassword" required 
+                                                   minlength="8" maxlength="128">
+                                            <button type="button" class="btn btn-outline-secondary" id="toggleSignupPassword">
+                                                <i class="bi bi-eye" id="signupPasswordIcon"></i>
+                                            </button>
                                         </div>
-                                        <div class="form-text">Password must be at least 6 characters long.</div>
+                                        <div class="form-text">
+                                            Password must be 8-128 characters with uppercase, lowercase, number and special character
+                                        </div>
+                                        
+                                        <!-- Password Strength Indicator -->
+                                        <div class="mt-2">
+                                            <div class="progress" style="height: 8px;">
+                                                <div class="progress-bar" id="passwordStrengthBar" 
+                                                     role="progressbar" style="width: 0%"></div>
+                                            </div>
+                                            <small class="text-muted" id="passwordStrengthText">Enter password to see strength</small>
+                                        </div>
+                                        
+                                        <!-- Password Requirements -->
+                                        <div class="mt-2">
+                                            <small class="text-muted">Requirements:</small>
+                                            <ul class="list-unstyled small">
+                                                <li id="req-length"><i class="bi bi-x-circle text-danger"></i> At least 8 characters</li>
+                                                <li id="req-upper"><i class="bi bi-x-circle text-danger"></i> One uppercase letter</li>
+                                                <li id="req-lower"><i class="bi bi-x-circle text-danger"></i> One lowercase letter</li>
+                                                <li id="req-number"><i class="bi bi-x-circle text-danger"></i> One number</li>
+                                                <li id="req-special"><i class="bi bi-x-circle text-danger"></i> One special character</li>
+                                            </ul>
+                                        </div>
+                                        <div class="invalid-feedback" id="signupPasswordError"></div>
                                     </div>
-                                    <button type="submit" class="btn btn-success btn-lg w-100">
+                                    <div class="mb-3">
+                                        <label for="signupConfirmPassword" class="form-label">Confirm Password</label>
+                                        <div class="input-group">
+                                            <span class="input-group-text"><i class="bi bi-lock-fill"></i></span>
+                                            <input type="password" class="form-control" id="signupConfirmPassword" required>
+                                        </div>
+                                        <div class="invalid-feedback" id="signupConfirmPasswordError"></div>
+                                    </div>
+                                    
+                                    <!-- Terms and Privacy -->
+                                    <div class="mb-3 form-check">
+                                        <input type="checkbox" class="form-check-input" id="agreeTerms" required>
+                                        <label class="form-check-label" for="agreeTerms">
+                                            I agree to the <a href="#" class="text-decoration-none">Terms of Service</a> 
+                                            and <a href="#" class="text-decoration-none">Privacy Policy</a>
+                                        </label>
+                                    </div>
+                                    
+                                    <!-- CAPTCHA for Registration -->
+                                    <div class="mb-3">
+                                        <label class="form-label">Security Check</label>
+                                        <div class="card border-info">
+                                            <div class="card-body text-center">
+                                                <p class="mb-2">Please solve: <strong id="signupCaptchaQuestion"></strong></p>
+                                                <input type="number" class="form-control" id="signupCaptchaAnswer" required 
+                                                       placeholder="Enter answer">
+                                                <small class="text-muted">This helps us prevent spam accounts</small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <button type="submit" class="btn btn-success btn-lg w-100" id="signupSubmitBtn">
                                         <i class="bi bi-person-plus me-2"></i>Create Account
                                     </button>
                                 </form>
                             </div>
+                            
+                            <!-- Forgot Password Form -->
+                            <div class="tab-pane fade" id="forgot" role="tabpanel">
+                                <form id="forgotPasswordForm">
+                                    <div class="mb-4 text-center">
+                                        <i class="bi bi-key text-warning" style="font-size: 3rem;"></i>
+                                        <h4 class="mt-3 mb-2">Reset Your Password</h4>
+                                        <p class="text-muted">Enter your email address and we'll send you a link to reset your password.</p>
+                                    </div>
+                                    
+                                    <div class="mb-3">
+                                        <label for="forgotEmail" class="form-label">Email Address</label>
+                                        <div class="input-group">
+                                            <span class="input-group-text"><i class="bi bi-envelope"></i></span>
+                                            <input type="email" class="form-control" id="forgotEmail" required 
+                                                   placeholder="Enter your email address">
+                                        </div>
+                                        <div class="invalid-feedback" id="forgotEmailError"></div>
+                                    </div>
+                                    
+                                    <button type="submit" class="btn btn-warning btn-lg w-100" id="forgotSubmitBtn">
+                                        <i class="bi bi-envelope me-2"></i>Send Reset Link
+                                    </button>
+                                </form>
+                                
+                                <!-- Success Message -->
+                                <div id="forgotSuccessMessage" class="alert alert-success mt-3 d-none">
+                                    <i class="bi bi-check-circle me-2"></i>
+                                    <strong>Email Sent!</strong> If an account with that email exists, 
+                                    you'll receive a password reset link shortly. Check your email (including spam folder).
+                                </div>
+                                
+                                <div class="mt-4 text-center">
+                                    <p class="text-muted mb-2">Remember your password?</p>
+                                    <button type="button" class="btn btn-link" 
+                                            onclick="document.getElementById('signin-tab').click()">
+                                        Back to Sign In
+                                    </button>
+                                </div>
+                            </div>
                         </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Password Reset Modal -->
+        <div class="modal fade" id="passwordResetModal" tabindex="-1">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header bg-warning text-dark">
+                        <h5 class="modal-title">
+                            <i class="bi bi-shield-lock me-2"></i>Reset Password
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <form id="resetPasswordForm">
+                            <input type="hidden" id="resetToken" />
+                            
+                            <div class="mb-3">
+                                <label for="resetEmail" class="form-label">Email Address</label>
+                                <input type="email" class="form-control" id="resetEmail" readonly>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label for="resetNewPassword" class="form-label">New Password</label>
+                                <div class="input-group">
+                                    <input type="password" class="form-control" id="resetNewPassword" required minlength="8">
+                                    <button type="button" class="btn btn-outline-secondary" id="toggleResetPassword">
+                                        <i class="bi bi-eye" id="resetPasswordIcon"></i>
+                                    </button>
+                                </div>
+                                <div class="form-text">
+                                    Password must be 8+ characters with uppercase, lowercase, number and special character
+                                </div>
+                                
+                                <!-- Password Strength Indicator -->
+                                <div class="mt-2">
+                                    <div class="progress" style="height: 8px;">
+                                        <div class="progress-bar" id="resetPasswordStrengthBar" 
+                                             role="progressbar" style="width: 0%"></div>
+                                    </div>
+                                    <small class="text-muted" id="resetPasswordStrengthText">Enter password to see strength</small>
+                                </div>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label for="resetConfirmPassword" class="form-label">Confirm New Password</label>
+                                <input type="password" class="form-control" id="resetConfirmPassword" required>
+                            </div>
+                            
+                            <div id="resetPasswordError" class="alert alert-danger d-none"></div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="button" class="btn btn-warning" onclick="submitPasswordReset()">
+                            <i class="bi bi-shield-check me-2"></i>Reset Password
+                        </button>
                     </div>
                 </div>
             </div>

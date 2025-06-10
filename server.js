@@ -6,6 +6,8 @@ const session = require('express-session');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const rateLimit = require('express-rate-limit');
+const { marked } = require('marked');
+const cookieParser = require('cookie-parser');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -25,6 +27,7 @@ const authLimiter = rateLimit({
 // Middleware
 app.use(limiter);
 app.use(cors());
+app.use(cookieParser());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
@@ -54,6 +57,96 @@ const userSessions = new Map();
 const userFiles = new Map();
 const userFolders = new Map();
 
+// File locking system (replace with Redis or database in production)
+const fileLocks = new Map(); // key: "username:filename", value: { owner, timestamp, expiresAt }
+
+// Authentication security tracking
+const authAttempts = new Map(); // key: IP or email, value: { count, lockoutUntil, lastAttempt }
+const sessionTokens = new Map(); // key: token, value: { userId, expiresAt }
+
+// CAPTCHA system
+const generateCaptcha = () => {
+  const operations = ['+', '-', '*'];
+  const operation = operations[Math.floor(Math.random() * operations.length)];
+  let num1, num2, answer;
+  
+  switch (operation) {
+    case '+':
+      num1 = Math.floor(Math.random() * 50) + 1;
+      num2 = Math.floor(Math.random() * 50) + 1;
+      answer = num1 + num2;
+      break;
+    case '-':
+      num1 = Math.floor(Math.random() * 50) + 25;
+      num2 = Math.floor(Math.random() * 25) + 1;
+      answer = num1 - num2;
+      break;
+    case '*':
+      num1 = Math.floor(Math.random() * 12) + 1;
+      num2 = Math.floor(Math.random() * 12) + 1;
+      answer = num1 * num2;
+      break;
+  }
+  
+  return {
+    question: `${num1} ${operation} ${num2}`,
+    answer: answer
+  };
+};
+
+// Check authentication attempts and lockout
+const checkAuthAttempts = (identifier) => {
+  const attempts = authAttempts.get(identifier);
+  if (!attempts) return { allowed: true, remainingAttempts: 3 };
+  
+  const now = Date.now();
+  
+  // Check if locked out
+  if (attempts.lockoutUntil && attempts.lockoutUntil > now) {
+    const remainingMinutes = Math.ceil((attempts.lockoutUntil - now) / (60 * 1000));
+    return { 
+      allowed: false, 
+      lockedOut: true, 
+      remainingMinutes,
+      remainingAttempts: 0 
+    };
+  }
+  
+  // Reset if lockout expired
+  if (attempts.lockoutUntil && attempts.lockoutUntil <= now) {
+    authAttempts.delete(identifier);
+    return { allowed: true, remainingAttempts: 3 };
+  }
+  
+  const remainingAttempts = Math.max(0, 3 - attempts.count);
+  return { 
+    allowed: remainingAttempts > 0, 
+    remainingAttempts,
+    lastAttempt: attempts.lastAttempt 
+  };
+};
+
+// Record failed authentication attempt
+const recordFailedAuth = (identifier) => {
+  const now = Date.now();
+  const attempts = authAttempts.get(identifier) || { count: 0, lockoutUntil: null };
+  
+  attempts.count += 1;
+  attempts.lastAttempt = now;
+  
+  // Lock out after 3 failed attempts for 1 hour
+  if (attempts.count >= 3) {
+    attempts.lockoutUntil = now + (60 * 60 * 1000); // 1 hour
+  }
+  
+  authAttempts.set(identifier, attempts);
+};
+
+// Clear successful authentication attempts
+const clearAuthAttempts = (identifier) => {
+  authAttempts.delete(identifier);
+};
+
 // Sample users for demonstration
 const initializeUsers = async () => {
   const hashedPassword = await bcrypt.hash('password123', 10);
@@ -80,11 +173,32 @@ initializeUsers();
 
 // Authentication middleware
 const requireAuth = (req, res, next) => {
+  // Check session first
   if (req.session && req.session.userId) {
     const user = Array.from(users.values()).find(u => u.id === req.session.userId);
     if (user) {
       req.user = user;
       return next();
+    }
+  }
+  
+  // Check remember token if no session
+  const rememberToken = req.cookies.remember_token;
+  if (rememberToken) {
+    const tokenData = sessionTokens.get(rememberToken);
+    if (tokenData && tokenData.expiresAt > Date.now()) {
+      const user = Array.from(users.values()).find(u => u.id === tokenData.userId);
+      if (user) {
+        // Recreate session
+        req.session.userId = user.id;
+        req.session.email = user.email;
+        req.user = user;
+        return next();
+      }
+    } else if (tokenData) {
+      // Clean up expired token
+      sessionTokens.delete(rememberToken);
+      res.clearCookie('remember_token');
     }
   }
   
@@ -162,6 +276,19 @@ app.get('/auth', requireGuest, async (req, res) => {
   }
 });
 
+// Password reset page (accessible via email link)
+app.get('/auth/reset-password', requireGuest, async (req, res) => {
+  try {
+    const html = await res.locals.renderLayout('auth', { 
+      title: 'BDPADrive - Reset Password'
+    });
+    res.send(html);
+  } catch (err) {
+    console.error('Error rendering reset password page:', err);
+    res.status(500).send('Error rendering page');
+  }
+});
+
 // Dashboard (for authenticated users only)
 app.get('/dashboard', requireAuth, async (req, res) => {
   try {
@@ -169,10 +296,25 @@ app.get('/dashboard', requireAuth, async (req, res) => {
     const userFileList = userFiles.get(req.user.id) || [];
     const userFolderList = userFolders.get(req.user.id) || [];
     
+    // Calculate storage usage (excluding symlinks as per requirement)
+    const totalBytes = userFileList
+      .filter(file => file.type !== 'symlink')
+      .reduce((acc, file) => acc + (file.size || 0), 0);
+    
+    const storageInfo = {
+      totalBytes: totalBytes,
+      totalKB: Math.round(totalBytes / 1024),
+      totalMB: Math.round(totalBytes / (1024 * 1024) * 100) / 100,
+      fileCount: userFileList.length,
+      folderCount: userFolderList.length,
+      excludedFromStorage: userFileList.filter(f => f.type === 'symlink').length
+    };
+    
     const html = await res.locals.renderLayout('dashboard', { 
       title: 'BDPADrive - Dashboard',
       files: userFileList,
-      folders: userFolderList
+      folders: userFolderList,
+      storage: storageInfo
     });
     res.send(html);
   } catch (err) {
@@ -202,24 +344,145 @@ app.get('/files', requireAuth, async (req, res) => {
 // Search functionality (for authenticated users only)
 app.get('/search', requireAuth, async (req, res) => {
   try {
-    const query = req.query.q || '';
+    const { 
+      q: query = '', 
+      type = 'all', 
+      dateRange = '', 
+      sortBy = 'relevance', 
+      tags = '', 
+      owner = '', 
+      minSize = '', 
+      maxSize = '' 
+    } = req.query;
+    
     const userFileList = userFiles.get(req.user.id) || [];
     const userFolderList = userFolders.get(req.user.id) || [];
     
-    // Simple search implementation
-    const searchResults = {
-      files: userFileList.filter(file => 
-        file.name.toLowerCase().includes(query.toLowerCase()) ||
-        file.content.toLowerCase().includes(query.toLowerCase())
-      ),
-      folders: userFolderList.filter(folder => 
-        folder.name.toLowerCase().includes(query.toLowerCase())
-      )
+    let searchResults = {
+      files: [],
+      folders: []
     };
+    
+    if (query.trim()) {
+      // Apply basic text search
+      let filteredFiles = userFileList.filter(file => 
+        file.name.toLowerCase().includes(query.toLowerCase()) ||
+        (file.content && file.content.toLowerCase().includes(query.toLowerCase())) ||
+        (file.tags && file.tags.some(tag => tag.toLowerCase().includes(query.toLowerCase())))
+      );
+      
+      let filteredFolders = userFolderList.filter(folder => 
+        folder.name.toLowerCase().includes(query.toLowerCase())
+      );
+      
+      // Apply type filter
+      if (type === 'files') {
+        filteredFolders = [];
+      } else if (type === 'folders') {
+        filteredFiles = [];
+      }
+      
+      // Apply date range filter
+      if (dateRange) {
+        const now = new Date();
+        let cutoffDate;
+        
+        switch (dateRange) {
+          case 'today':
+            cutoffDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            break;
+          case 'week':
+            cutoffDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+            break;
+          case 'month':
+            cutoffDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+            break;
+          case 'year':
+            cutoffDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+            break;
+        }
+        
+        if (cutoffDate) {
+          filteredFiles = filteredFiles.filter(file => 
+            new Date(file.updatedAt || file.createdAt) >= cutoffDate
+          );
+          filteredFolders = filteredFolders.filter(folder => 
+            new Date(folder.updatedAt || folder.createdAt) >= cutoffDate
+          );
+        }
+      }
+      
+      // Apply tags filter
+      if (tags.trim()) {
+        const searchTags = tags.toLowerCase().split(',').map(tag => tag.trim());
+        filteredFiles = filteredFiles.filter(file => 
+          file.tags && searchTags.some(searchTag => 
+            file.tags.some(fileTag => fileTag.toLowerCase().includes(searchTag))
+          )
+        );
+      }
+      
+      // Apply owner filter
+      if (owner.trim()) {
+        const ownerLower = owner.toLowerCase();
+        filteredFiles = filteredFiles.filter(file => 
+          file.owner && file.owner.toLowerCase().includes(ownerLower)
+        );
+        filteredFolders = filteredFolders.filter(folder => 
+          folder.owner && folder.owner.toLowerCase().includes(ownerLower)
+        );
+      }
+      
+      // Apply size filters (files only)
+      if (minSize || maxSize) {
+        const minSizeBytes = minSize ? parseInt(minSize) * 1024 : 0;
+        const maxSizeBytes = maxSize ? parseInt(maxSize) * 1024 : Infinity;
+        
+        filteredFiles = filteredFiles.filter(file => {
+          const fileSize = file.size || 0;
+          return fileSize >= minSizeBytes && fileSize <= maxSizeBytes;
+        });
+      }
+      
+      // Apply sorting
+      switch (sortBy) {
+        case 'modified':
+          filteredFiles.sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt));
+          filteredFolders.sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt));
+          break;
+        case 'created':
+          filteredFiles.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+          filteredFolders.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+          break;
+        case 'name':
+          filteredFiles.sort((a, b) => a.name.localeCompare(b.name));
+          filteredFolders.sort((a, b) => a.name.localeCompare(b.name));
+          break;
+        case 'size':
+          filteredFiles.sort((a, b) => (b.size || 0) - (a.size || 0));
+          // Folders don't have size, so keep creation order
+          break;
+        default: // relevance
+          // Already sorted by relevance (text match quality could be improved)
+          break;
+      }
+      
+      searchResults = {
+        files: filteredFiles,
+        folders: filteredFolders
+      };
+    }
     
     const html = await res.locals.renderLayout('search', { 
       title: 'BDPADrive - Search Results',
       query,
+      type,
+      dateRange,
+      sortBy,
+      tags,
+      owner,
+      minSize,
+      maxSize,
       results: searchResults
     });
     res.send(html);
@@ -478,6 +741,215 @@ app.post('/api/v1/users/:username/auth', authLimiter, async (req, res) => {
   }
 });
 
+// PUT /api/v1/users/:username - Update user information
+app.put('/api/v1/users/:username', requireAuth, async (req, res) => {
+  try {
+    const username = req.params.username.toLowerCase();
+    const { email, password, name } = req.body;
+    
+    // Find the user
+    let user = Array.from(users.values()).find(u => 
+      u.username?.toLowerCase() === username || u.email?.toLowerCase() === username
+    );
+    
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+    
+    // Check if the authenticated user is updating their own account or is admin
+    if (req.user.id !== user.id && req.user.email !== 'admin@bdpadrive.com') {
+      return res.status(403).json({ success: false, error: 'Access denied' });
+    }
+    
+    // Validate email format if provided
+    if (email) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        return res.status(400).json({ success: false, error: 'Invalid email format' });
+      }
+      
+      // Check if email is already taken by another user
+      const existingUser = Array.from(users.values()).find(u => 
+        u.email.toLowerCase() === email.toLowerCase() && u.id !== user.id
+      );
+      if (existingUser) {
+        return res.status(409).json({ success: false, error: 'Email already in use' });
+      }
+    }
+    
+    // Update user fields
+    if (email) {
+      // Remove old email key and add new one
+      users.delete(user.email);
+      user.email = email.toLowerCase();
+      user.username = user.username || email.toLowerCase();
+    }
+    
+    if (name) {
+      user.name = name.trim();
+    }
+    
+    if (password) {
+      // Validate password strength
+      if (password.length < 8) {
+        return res.status(400).json({ 
+          success: false, 
+          error: 'Password must be at least 8 characters long' 
+        });
+      }
+      
+      // Hash new password
+      const saltRounds = 10;
+      user.password = await bcrypt.hash(password, saltRounds);
+    }
+    
+    user.updatedAt = new Date();
+    
+    // Re-add user with potentially new email key
+    users.set(user.email, user);
+    
+    res.json({
+      success: true,
+      message: 'User updated successfully',
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        name: user.name,
+        updatedAt: user.updatedAt
+      }
+    });
+    
+  } catch (error) {
+    console.error('Update user error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+// DELETE /api/v1/users/:username - Delete user account and all their files
+app.delete('/api/v1/users/:username', requireAuth, async (req, res) => {
+  try {
+    const username = req.params.username.toLowerCase();
+    
+    // Find the user
+    let user = Array.from(users.values()).find(u => 
+      u.username?.toLowerCase() === username || u.email?.toLowerCase() === username
+    );
+    
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+    
+    // Check if the authenticated user is deleting their own account or is admin
+    if (req.user.id !== user.id && req.user.email !== 'admin@bdpadrive.com') {
+      return res.status(403).json({ success: false, error: 'Access denied' });
+    }
+    
+    // Prevent admin from deleting themselves (safety measure)
+    if (user.email === 'admin@bdpadrive.com' && req.user.email === 'admin@bdpadrive.com') {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Admin account cannot be deleted' 
+      });
+    }
+    
+    // Delete all user's files and folders
+    const userFileList = userFiles.get(user.id) || [];
+    const userFolderList = userFolders.get(user.id) || [];
+    
+    // Release all locks owned by this user
+    for (const [lockKey, lock] of fileLocks.entries()) {
+      if (lock.owner === user.email) {
+        fileLocks.delete(lockKey);
+      }
+    }
+    
+    // Remove user's files and folders
+    userFiles.delete(user.id);
+    userFolders.delete(user.id);
+    
+    // Remove user sessions
+    userSessions.delete(user.id);
+    
+    // Remove user account
+    users.delete(user.email);
+    
+    // Calculate deleted data stats
+    const deletedFilesCount = userFileList.length;
+    const deletedFoldersCount = userFolderList.length;
+    const deletedStorageBytes = userFileList.reduce((acc, file) => 
+      acc + (file.size || 0), 0
+    );
+    
+    res.json({
+      success: true,
+      message: 'User account deleted successfully',
+      deletedData: {
+        files: deletedFilesCount,
+        folders: deletedFoldersCount,
+        storageBytes: deletedStorageBytes,
+        storageKB: Math.round(deletedStorageBytes / 1024)
+      }
+    });
+    
+  } catch (error) {
+    console.error('Delete user error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+// GET /api/v1/users/:username/storage - Get user storage statistics
+app.get('/api/v1/users/:username/storage', requireAuth, (req, res) => {
+  try {
+    const username = req.params.username.toLowerCase();
+    
+    // Find the user
+    let user = Array.from(users.values()).find(u => 
+      u.username?.toLowerCase() === username || u.email?.toLowerCase() === username
+    );
+    
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+    
+    // Check if the authenticated user is accessing their own data or is admin
+    if (req.user.id !== user.id && req.user.email !== 'admin@bdpadrive.com') {
+      return res.status(403).json({ success: false, error: 'Access denied' });
+    }
+    
+    const userFileList = userFiles.get(user.id) || [];
+    const userFolderList = userFolders.get(user.id) || [];
+    
+    // Calculate storage usage (excluding symlinks as per requirement)
+    const totalBytes = userFileList
+      .filter(file => file.type !== 'symlink')
+      .reduce((acc, file) => acc + (file.size || 0), 0);
+    
+    const filesByType = {
+      document: userFileList.filter(f => f.type === 'document' || !f.type).length,
+      symlink: userFileList.filter(f => f.type === 'symlink').length,
+      other: userFileList.filter(f => f.type && f.type !== 'document' && f.type !== 'symlink').length
+    };
+    
+    res.json({
+      success: true,
+      storage: {
+        totalBytes: totalBytes,
+        totalKB: Math.round(totalBytes / 1024),
+        totalMB: Math.round(totalBytes / (1024 * 1024) * 100) / 100,
+        fileCount: userFileList.length,
+        folderCount: userFolderList.length,
+        filesByType: filesByType,
+        excludedFromStorage: userFileList.filter(f => f.type === 'symlink').length
+      }
+    });
+    
+  } catch (error) {
+    console.error('Get storage error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
 // ================================
 // Filesystem Endpoints
 // ================================
@@ -485,7 +957,18 @@ app.post('/api/v1/users/:username/auth', authLimiter, async (req, res) => {
 // GET /api/v1/filesystem/:username/search
 app.get('/api/v1/filesystem/:username/search', requireAuth, requireUsername, (req, res) => {
   try {
-    const { after, match, regexMatch } = req.query;
+    const { 
+      after, 
+      match, 
+      regexMatch,
+      dateRange,
+      sortBy = 'created',
+      tags,
+      owner,
+      minSize,
+      maxSize,
+      type
+    } = req.query;
     const targetUsername = req.params.username;
     
     // Check if user can access this username's files
@@ -519,11 +1002,77 @@ app.get('/api/v1/filesystem/:username/search', requireAuth, requireUsername, (re
         node_id: folder.id,
         owner: targetUsername,
         createdAt: new Date(folder.createdAt).getTime(),
+        modifiedAt: new Date(folder.updatedAt || folder.createdAt).getTime(),
         type: 'directory',
         name: folder.name,
         contents: []
       }))
     ];
+    
+    // Apply type filter
+    if (type) {
+      if (type === 'files') {
+        allNodes = allNodes.filter(node => node.type === 'file');
+      } else if (type === 'folders') {
+        allNodes = allNodes.filter(node => node.type === 'directory');
+      }
+    }
+    
+    // Apply date range filter
+    if (dateRange) {
+      const now = Date.now();
+      let cutoffTime;
+      
+      switch (dateRange) {
+        case 'today':
+          const today = new Date();
+          cutoffTime = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+          break;
+        case 'week':
+          cutoffTime = now - (7 * 24 * 60 * 60 * 1000);
+          break;
+        case 'month':
+          cutoffTime = now - (30 * 24 * 60 * 60 * 1000);
+          break;
+        case 'year':
+          cutoffTime = now - (365 * 24 * 60 * 60 * 1000);
+          break;
+      }
+      
+      if (cutoffTime) {
+        allNodes = allNodes.filter(node => node.modifiedAt >= cutoffTime);
+      }
+    }
+    
+    // Apply size filters (files only)
+    if (minSize || maxSize) {
+      const minSizeBytes = minSize ? parseInt(minSize) * 1024 : 0;
+      const maxSizeBytes = maxSize ? parseInt(maxSize) * 1024 : Infinity;
+      
+      allNodes = allNodes.filter(node => {
+        if (node.type === 'directory') return true; // Don't filter directories by size
+        return node.size >= minSizeBytes && node.size <= maxSizeBytes;
+      });
+    }
+    
+    // Apply tags filter
+    if (tags) {
+      const searchTags = tags.toLowerCase().split(',').map(tag => tag.trim());
+      allNodes = allNodes.filter(node => {
+        if (node.type === 'directory') return true; // Directories don't have tags
+        return node.tags && searchTags.some(searchTag => 
+          node.tags.some(nodeTag => nodeTag.toLowerCase().includes(searchTag))
+        );
+      });
+    }
+    
+    // Apply owner filter
+    if (owner) {
+      const ownerLower = owner.toLowerCase();
+      allNodes = allNodes.filter(node => 
+        node.owner && node.owner.toLowerCase().includes(ownerLower)
+      );
+    }
     
     // Apply match filters (enhanced with simple text search)
     if (match) {
@@ -621,8 +1170,22 @@ app.get('/api/v1/filesystem/:username/search', requireAuth, requireUsername, (re
       }
     }
     
-    // Sort by creation date (newest first)
-    allNodes.sort((a, b) => b.createdAt - a.createdAt);
+    // Apply sorting
+    switch (sortBy) {
+      case 'modified':
+        allNodes.sort((a, b) => b.modifiedAt - a.modifiedAt);
+        break;
+      case 'name':
+        allNodes.sort((a, b) => a.name.localeCompare(b.name));
+        break;
+      case 'size':
+        allNodes.sort((a, b) => (b.size || 0) - (a.size || 0));
+        break;
+      case 'created':
+      default:
+        allNodes.sort((a, b) => b.createdAt - a.createdAt);
+        break;
+    }
     
     // Handle pagination
     if (after) {
@@ -1024,6 +1587,20 @@ app.put('/api/v1/filesystem/:username/:path', requireAuth, requireUsername, (req
     const userFileList = userFiles.get(targetUser.id) || [];
     const userFolderList = userFolders.get(targetUser.id) || [];
     
+    // Check file lock before allowing modifications
+    const lockKey = `${targetUsername}:${path}`;
+    cleanupExpiredLocks(); // Clean expired locks first
+    const existingLock = fileLocks.get(lockKey);
+    
+    if (existingLock && existingLock.owner !== req.user.email) {
+      return res.status(423).json({ 
+        success: false, 
+        error: `File is locked by ${existingLock.owner}. Cannot modify.`,
+        locked: true,
+        lockOwner: existingLock.owner
+      });
+    }
+    
     // Validate tags if provided
     if (tags && Array.isArray(tags)) {
       if (tags.length > 5) {
@@ -1071,7 +1648,7 @@ app.put('/api/v1/filesystem/:username/:path', requireAuth, requireUsername, (req
       
       if (content !== undefined) {
         file.content = content;
-        file.size = Buffer.byteLength(content, 'utf8');
+        file.size = newNode.size;
       }
       
       if (mimeType) {
@@ -1186,6 +1763,20 @@ app.patch('/api/v1/filesystem/:username/:path', requireAuth, requireUsername, (r
     const userFileList = userFiles.get(targetUser.id) || [];
     const userFolderList = userFolders.get(targetUser.id) || [];
     
+    // Check file lock before allowing rename/move
+    const lockKey = `${targetUsername}:${currentPath}`;
+    cleanupExpiredLocks(); // Clean expired locks first
+    const existingLock = fileLocks.get(lockKey);
+    
+    if (existingLock && existingLock.owner !== req.user.email) {
+      return res.status(423).json({ 
+        success: false, 
+        error: `File is locked by ${existingLock.owner}. Cannot rename/move.`,
+        locked: true,
+        lockOwner: existingLock.owner
+      });
+    }
+    
     // Look for file first
     const fileIndex = userFileList.findIndex(f => f.name === currentPath);
     if (fileIndex !== -1) {
@@ -1202,6 +1793,15 @@ app.patch('/api/v1/filesystem/:username/:path', requireAuth, requireUsername, (r
       file.updatedAt = new Date();
       userFileList[fileIndex] = file;
       userFiles.set(targetUser.id, userFileList);
+      
+      // Migrate lock to new file name if it exists
+      const oldLockKey = `${targetUsername}:${currentPath}`;
+      const newLockKey = `${targetUsername}:${finalName}`;
+      const existingLock = fileLocks.get(oldLockKey);
+      if (existingLock) {
+        fileLocks.delete(oldLockKey);
+        fileLocks.set(newLockKey, existingLock);
+      }
       
       return res.json({
         success: true,
@@ -1236,6 +1836,15 @@ app.patch('/api/v1/filesystem/:username/:path', requireAuth, requireUsername, (r
       folder.updatedAt = new Date();
       userFolderList[folderIndex] = folder;
       userFolders.set(targetUser.id, userFolderList);
+      
+      // Migrate lock to new folder name if it exists
+      const oldLockKey = `${targetUsername}:${currentPath}`;
+      const newLockKey = `${targetUsername}:${finalName}`;
+      const existingLock = fileLocks.get(oldLockKey);
+      if (existingLock) {
+        fileLocks.delete(oldLockKey);
+        fileLocks.set(newLockKey, existingLock);
+      }
       
       return res.json({
         success: true,
@@ -1277,11 +1886,28 @@ app.delete('/api/v1/filesystem/:username/:path', requireAuth, requireUsername, (
     const userFileList = userFiles.get(targetUser.id) || [];
     const userFolderList = userFolders.get(targetUser.id) || [];
     
+    // Check file lock before allowing deletion
+    const lockKey = `${targetUsername}:${path}`;
+    cleanupExpiredLocks(); // Clean expired locks first
+    const existingLock = fileLocks.get(lockKey);
+    
+    if (existingLock && existingLock.owner !== req.user.email) {
+      return res.status(423).json({ 
+        success: false, 
+        error: `File is locked by ${existingLock.owner}. Cannot delete.`,
+        locked: true,
+        lockOwner: existingLock.owner
+      });
+    }
+    
     // Look for file first
     const fileIndex = userFileList.findIndex(f => f.name === path);
     if (fileIndex !== -1) {
       const deletedFile = userFileList.splice(fileIndex, 1)[0];
       userFiles.set(targetUser.id, userFileList);
+      
+      // Remove file lock if it exists
+      fileLocks.delete(lockKey);
       
       return res.json({
         success: true,
@@ -1294,6 +1920,10 @@ app.delete('/api/v1/filesystem/:username/:path', requireAuth, requireUsername, (
     if (folderIndex !== -1) {
       const deletedFolder = userFolderList.splice(folderIndex, 1)[0];
       userFolders.set(targetUser.id, userFolderList);
+      
+      // Remove any locks for files in this folder (if we supported nested files)
+      // For now, just remove the folder lock if it exists
+      fileLocks.delete(lockKey);
       
       return res.json({
         success: true,
@@ -1309,30 +1939,365 @@ app.delete('/api/v1/filesystem/:username/:path', requireAuth, requireUsername, (
 });
 
 // ================================
-// Legacy Authentication API Routes (for backward compatibility)
+// File Locking Endpoints
+// ================================
+
+// Helper function to clean up expired locks
+const cleanupExpiredLocks = () => {
+  const now = Date.now();
+  for (const [key, lock] of fileLocks.entries()) {
+    if (lock.expiresAt < now) {
+      fileLocks.delete(key);
+    }
+  }
+};
+
+// POST /api/v1/filesystem/:username/:path/lock - Acquire or release file lock
+app.post('/api/v1/filesystem/:username/:path/lock', requireAuth, requireUsername, (req, res) => {
+  try {
+    const targetUsername = req.params.username;
+    const path = req.params.path;
+    const { action } = req.body; // 'acquire' or 'release'
+    
+    // Check if user can access this username's files
+    if (targetUsername !== req.username && req.user.email !== 'admin@bdpadrive.com') {
+      return res.status(403).json({ success: false, error: 'Access denied' });
+    }
+    
+    const targetUser = Array.from(users.values()).find(u => u.email === targetUsername);
+    if (!targetUser) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+    
+    // Verify file exists
+    const userFileList = userFiles.get(targetUser.id) || [];
+    const file = userFileList.find(f => f.name === path);
+    if (!file) {
+      return res.status(404).json({ success: false, error: 'File not found' });
+    }
+    
+    const lockKey = `${targetUsername}:${path}`;
+    const currentUser = req.user.email;
+    const now = Date.now();
+    
+    // Clean up expired locks first
+    cleanupExpiredLocks();
+    
+    if (action === 'acquire') {
+      const existingLock = fileLocks.get(lockKey);
+      
+      if (existingLock && existingLock.owner !== currentUser) {
+        // File is locked by someone else
+        return res.status(409).json({
+          success: false,
+          error: 'File is locked by another user',
+          locked: true,
+          lockOwner: existingLock.owner,
+          lockedAt: existingLock.timestamp
+        });
+      }
+      
+      // Acquire or refresh lock (10 minutes duration)
+      const lockExpiry = now + (10 * 60 * 1000); // 10 minutes
+      fileLocks.set(lockKey, {
+        owner: currentUser,
+        timestamp: now,
+        expiresAt: lockExpiry
+      });
+      
+      return res.json({
+        success: true,
+        message: 'Lock acquired successfully',
+        locked: true,
+        lockOwner: currentUser,
+        expiresAt: lockExpiry
+      });
+      
+    } else if (action === 'release') {
+      const existingLock = fileLocks.get(lockKey);
+      
+      if (existingLock && existingLock.owner === currentUser) {
+        fileLocks.delete(lockKey);
+        return res.json({
+          success: true,
+          message: 'Lock released successfully',
+          locked: false
+        });
+      } else if (existingLock) {
+        return res.status(403).json({
+          success: false,
+          error: 'Cannot release lock owned by another user'
+        });
+      } else {
+        return res.json({
+          success: true,
+          message: 'No lock to release',
+          locked: false
+        });
+      }
+      
+    } else if (action === 'force-release') {
+      // Force release any existing lock (admin or lock conflict resolution)
+      const existingLock = fileLocks.get(lockKey);
+      
+      if (existingLock) {
+        fileLocks.delete(lockKey);
+        console.log(`Lock force-released by ${currentUser} from ${existingLock.owner} for file: ${lockKey}`);
+        return res.json({
+          success: true,
+          message: 'Lock force-released successfully',
+          locked: false,
+          previousOwner: existingLock.owner
+        });
+      } else {
+        return res.json({
+          success: true,
+          message: 'No lock to force-release',
+          locked: false
+        });
+      }
+    }
+    
+    return res.status(400).json({
+      success: false,
+      error: 'Invalid action. Use "acquire", "release", or "force-release".'
+    });
+    
+  } catch (error) {
+    console.error('File lock error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+// GET /api/v1/filesystem/:username/:path/lock - Check file lock status
+app.get('/api/v1/filesystem/:username/:path/lock', requireAuth, requireUsername, (req, res) => {
+  try {
+    const targetUsername = req.params.username;
+    const path = req.params.path;
+    
+    // Check if user can access this username's files
+    if (targetUsername !== req.username && req.user.email !== 'admin@bdpadrive.com') {
+      return res.status(403).json({ success: false, error: 'Access denied' });
+    }
+    
+    const targetUser = Array.from(users.values()).find(u => u.email === targetUsername);
+    if (!targetUser) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+    
+    // Verify file exists
+    const userFileList = userFiles.get(targetUser.id) || [];
+    const file = userFileList.find(f => f.name === path);
+    if (!file) {
+      return res.status(404).json({ success: false, error: 'File not found' });
+    }
+    
+    const lockKey = `${targetUsername}:${path}`;
+    
+    // Clean up expired locks first
+    cleanupExpiredLocks();
+    
+    const existingLock = fileLocks.get(lockKey);
+    
+    if (existingLock) {
+      return res.json({
+        success: true,
+        locked: true,
+        lockOwner: existingLock.owner,
+        lockedAt: existingLock.timestamp,
+        expiresAt: existingLock.expiresAt
+      });
+    } else {
+      return res.json({
+        success: true,
+        locked: false
+      });
+    }
+    
+  } catch (error) {
+    console.error('Lock status check error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+// Cleanup expired locks every 5 minutes
+setInterval(cleanupExpiredLocks, 5 * 60 * 1000);
+
+// ================================
+// Authentication Security API Routes
+// ================================
+
+// GET /api/auth/captcha - Generate CAPTCHA challenge
+app.get('/api/auth/captcha', (req, res) => {
+  const captcha = generateCaptcha();
+  req.session.captcha = captcha.answer;
+  res.json({
+    success: true,
+    question: captcha.question
+  });
+});
+
+// POST /api/auth/verify-captcha - Verify CAPTCHA answer
+app.post('/api/auth/verify-captcha', (req, res) => {
+  const { answer } = req.body;
+  const correctAnswer = req.session.captcha;
+  
+  if (!correctAnswer) {
+    return res.status(400).json({
+      success: false,
+      error: 'No CAPTCHA challenge found'
+    });
+  }
+  
+  const isCorrect = parseInt(answer) === correctAnswer;
+  if (isCorrect) {
+    req.session.captchaVerified = true;
+  }
+  
+  res.json({
+    success: true,
+    correct: isCorrect
+  });
+});
+
+// GET /api/auth/status - Check authentication status and rate limiting
+app.get('/api/auth/status', (req, res) => {
+  const clientIP = req.ip || req.connection.remoteAddress;
+  const { email } = req.query;
+  
+  // Check rate limiting for IP and email
+  const ipStatus = checkAuthAttempts(clientIP);
+  const emailStatus = email ? checkAuthAttempts(email.toLowerCase()) : { allowed: true, remainingAttempts: 3 };
+  
+  const status = {
+    ipAllowed: ipStatus.allowed,
+    emailAllowed: emailStatus.allowed,
+    remainingAttempts: Math.min(ipStatus.remainingAttempts, emailStatus.remainingAttempts),
+    requiresCaptcha: ipStatus.remainingAttempts <= 2 || emailStatus.remainingAttempts <= 2,
+    lockedOut: ipStatus.lockedOut || emailStatus.lockedOut,
+    lockoutMinutes: Math.max(ipStatus.remainingMinutes || 0, emailStatus.remainingMinutes || 0)
+  };
+  
+  res.json({
+    success: true,
+    ...status
+  });
+});
+
+// POST /api/auth/check-availability - Check username/email availability
+app.post('/api/auth/check-availability', (req, res) => {
+  const { username, email } = req.body;
+  
+  const result = {
+    usernameAvailable: true,
+    emailAvailable: true
+  };
+  
+  if (username) {
+    const usernameLower = username.toLowerCase();
+    result.usernameAvailable = !Array.from(users.values()).some(u => 
+      u.username?.toLowerCase() === usernameLower
+    );
+  }
+  
+  if (email) {
+    const emailLower = email.toLowerCase();
+    result.emailAvailable = !users.has(emailLower);
+  }
+  
+  res.json({
+    success: true,
+    ...result
+  });
+});
+
+// ================================
+// Legacy Authentication API Routes (enhanced with security features)
 // ================================
 
 app.post('/api/auth/login', authLimiter, async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, captchaAnswer, rememberMe } = req.body;
+    const clientIP = req.ip || req.connection.remoteAddress;
     
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password are required' });
     }
     
-    const user = users.get(email.toLowerCase());
+    const emailLower = email.toLowerCase();
+    
+    // Check rate limiting
+    const ipStatus = checkAuthAttempts(clientIP);
+    const emailStatus = checkAuthAttempts(emailLower);
+    
+    if (!ipStatus.allowed || !emailStatus.allowed) {
+      const maxMinutes = Math.max(ipStatus.remainingMinutes || 0, emailStatus.remainingMinutes || 0);
+      return res.status(429).json({ 
+        error: `Too many failed attempts. Try again in ${maxMinutes} minutes.`,
+        lockedOut: true,
+        lockoutMinutes: maxMinutes
+      });
+    }
+    
+    // Check CAPTCHA if required (after 1 failed attempt)
+    const requiresCaptcha = ipStatus.remainingAttempts <= 2 || emailStatus.remainingAttempts <= 2;
+    if (requiresCaptcha) {
+      if (!captchaAnswer) {
+        return res.status(400).json({ 
+          error: 'CAPTCHA verification required',
+          requiresCaptcha: true 
+        });
+      }
+      
+      const correctAnswer = req.session.captcha;
+      if (!correctAnswer || parseInt(captchaAnswer) !== correctAnswer) {
+        recordFailedAuth(clientIP);
+        recordFailedAuth(emailLower);
+        return res.status(400).json({ 
+          error: 'Invalid CAPTCHA answer',
+          requiresCaptcha: true 
+        });
+      }
+    }
+    
+    const user = users.get(emailLower);
     if (!user) {
+      recordFailedAuth(clientIP);
+      recordFailedAuth(emailLower);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
     
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
+      recordFailedAuth(clientIP);
+      recordFailedAuth(emailLower);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
+    
+    // Clear failed attempts on successful login
+    clearAuthAttempts(clientIP);
+    clearAuthAttempts(emailLower);
     
     // Create session
     req.session.userId = user.id;
     req.session.email = user.email;
+    
+    // Handle "Remember Me" functionality
+    if (rememberMe) {
+      req.session.cookie.maxAge = 30 * 24 * 60 * 60 * 1000; // 30 days
+      
+      // Generate remember token
+      const rememberToken = uuidv4();
+      const expiresAt = Date.now() + (30 * 24 * 60 * 60 * 1000);
+      sessionTokens.set(rememberToken, { userId: user.id, expiresAt });
+      
+      res.cookie('remember_token', rememberToken, {
+        maxAge: 30 * 24 * 60 * 60 * 1000,
+        httpOnly: true,
+        secure: false, // Set to true in production with HTTPS
+        sameSite: 'strict'
+      });
+    }
     
     // Update last login
     user.lastLogin = new Date();
@@ -1344,6 +2309,10 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     if (!userFolders.has(user.id)) {
       userFolders.set(user.id, []);
     }
+    
+    // Clear CAPTCHA session data
+    delete req.session.captcha;
+    delete req.session.captchaVerified;
     
     res.json({ 
       success: true, 
@@ -1362,19 +2331,66 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
 
 app.post('/api/auth/register', authLimiter, async (req, res) => {
   try {
-    const { email, password, name } = req.body;
+    const { email, password, name, username, captchaAnswer } = req.body;
     
-    if (!email || !password || !name) {
-      return res.status(400).json({ error: 'Email, password, and name are required' });
+    if (!email || !password || !name || !username) {
+      return res.status(400).json({ error: 'All fields are required' });
     }
     
-    if (password.length < 6) {
-      return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+    // Verify CAPTCHA
+    const correctAnswer = req.session.captcha;
+    if (!correctAnswer || !captchaAnswer || parseInt(captchaAnswer) !== correctAnswer) {
+      return res.status(400).json({ error: 'Invalid CAPTCHA answer' });
+    }
+    
+    // Validate input formats
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ error: 'Invalid email format' });
+    }
+    
+    const usernameRegex = /^[a-zA-Z0-9_]{3,20}$/;
+    if (!usernameRegex.test(username)) {
+      return res.status(400).json({ 
+ 
+        error: 'Username must be 3-20 characters and contain only letters, numbers, and underscores' 
+      });
+    }
+    
+    if (name.trim().length < 2 || name.trim().length > 50) {
+      return res.status(400).json({ error: 'Name must be 2-50 characters long' });
+    }
+    
+    // Enhanced password validation
+    if (password.length < 8 || password.length > 128) {
+      return res.status(400).json({ error: 'Password must be 8-128 characters long' });
+    }
+    
+    const hasUppercase = /[A-Z]/.test(password);
+    const hasLowercase = /[a-z]/.test(password);
+    const hasNumber = /\d/.test(password);
+    const hasSpecialChar = /[!@#$%^&*(),.?":{}|<>]/.test(password);
+    
+    if (!hasUppercase || !hasLowercase || !hasNumber || !hasSpecialChar) {
+      return res.status(400).json({ 
+        error: 'Password must contain uppercase, lowercase, number, and special character' 
+      });
     }
     
     const emailLower = email.toLowerCase();
+    const usernameLower = username.toLowerCase();
+    
+    // Check email uniqueness
     if (users.has(emailLower)) {
-      return res.status(409).json({ error: 'User already exists' });
+      return res.status(409).json({ error: 'Email already registered' });
+    }
+    
+    // Check username uniqueness
+    const usernameExists = Array.from(users.values()).some(u => 
+      u.username?.toLowerCase() === usernameLower
+    );
+    if (usernameExists) {
+      return res.status(409).json({ error: 'Username already taken' });
     }
     
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -1383,6 +2399,7 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     const newUser = {
       id: userId,
       email: emailLower,
+      username: usernameLower,
       password: hashedPassword,
       name: name.trim(),
       salt: '2d6843cfd2ad23906fe33a236ba842a5', // Mock salt for demo
@@ -1400,11 +2417,16 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     req.session.userId = userId;
     req.session.email = emailLower;
     
+    // Clear CAPTCHA session data
+    delete req.session.captcha;
+    delete req.session.captchaVerified;
+    
     res.status(201).json({ 
       success: true, 
       user: { 
         id: userId, 
-        email: emailLower, 
+        email: emailLower,
+        username: usernameLower,
         name: name.trim() 
       },
       redirectUrl: '/dashboard'
@@ -1416,436 +2438,232 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
 });
 
 app.post('/api/auth/logout', requireAuth, (req, res) => {
+  const userEmail = req.user.email;
+  
+  // Clean up remember token if exists
+  const rememberToken = req.cookies.remember_token;
+  if (rememberToken) {
+    sessionTokens.delete(rememberToken);
+    res.clearCookie('remember_token');
+  }
+  
   req.session.destroy((err) => {
     if (err) {
       console.error('Logout error:', err);
       return res.status(500).json({ error: 'Could not log out' });
     }
+    
+    // Release all locks owned by this user
+    for (const [lockKey, lock] of fileLocks.entries()) {
+      if (lock.owner === userEmail) {
+        fileLocks.delete(lockKey);
+      }
+    }
+    
     res.json({ success: true, redirectUrl: '/auth' });
   });
 });
 
 // ================================
-// Legacy File Management API (for backward compatibility)
+// Password Recovery System
 // ================================
 
-// User info API (for authenticated users only)
-app.get('/api/user/me', requireAuth, (req, res) => {
-  res.json({
-    id: req.user.id,
-    email: req.user.email,
-    name: req.user.name,
-    createdAt: req.user.createdAt,
-    lastLogin: req.user.lastLogin
-  });
-});
+const passwordResetTokens = new Map(); // key: token, value: { email, expiresAt, used }
 
-// Get all files and folders for user
-app.get('/api/files', requireAuth, (req, res) => {
-  const userFileList = userFiles.get(req.user.id) || [];
-  const userFolderList = userFolders.get(req.user.id) || [];
-  
-  res.json({
-    files: userFileList,
-    folders: userFolderList
-  });
-});
-
-// Create a new file
-app.post('/api/files', requireAuth, (req, res) => {
-  try {
-    const { name, content = '', type = 'document' } = req.body;
-    
-    if (!name || !name.trim()) {
-      return res.status(400).json({ error: 'File name is required' });
-    }
-    
-    const userFileList = userFiles.get(req.user.id) || [];
-    
-    // Check if file name already exists
-    if (userFileList.some(file => file.name === name.trim())) {
-      return res.status(409).json({ error: 'File name already exists' });
-    }
-    
-    const newFile = {
-      id: uuidv4(),
-      name: name.trim(),
-      content: content,
-      type: type,
-      size: Buffer.byteLength(content, 'utf8'),
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      userId: req.user.id
-    };
-    
-    userFileList.push(newFile);
-    userFiles.set(req.user.id, userFileList);
-    
-    res.status(201).json(newFile);
-  } catch (error) {
-    console.error('Error creating file:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Get a specific file
-app.get('/api/files/:id', requireAuth, (req, res) => {
-  try {
-    const userFileList = userFiles.get(req.user.id) || [];
-    const file = userFileList.find(f => f.id === req.params.id);
-    
-    if (!file) {
-      return res.status(404).json({ error: 'File not found' });
-    }
-    
-    res.json(file);
-  } catch (error) {
-    console.error('Error getting file:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Update a file
-app.put('/api/files/:id', requireAuth, (req, res) => {
-  try {
-    const { name, content } = req.body;
-    const userFileList = userFiles.get(req.user.id) || [];
-    const fileIndex = userFileList.findIndex(f => f.id === req.params.id);
-    
-    if (fileIndex === -1) {
-      return res.status(404).json({ error: 'File not found' });
-    }
-    
-    const file = userFileList[fileIndex];
-    
-    // Update file properties
-    if (name && name.trim() !== file.name) {
-      // Check if new name already exists
-      if (userFileList.some(f => f.name === name.trim() && f.id !== file.id)) {
-        return res.status(409).json({ error: 'File name already exists' });
-      }
-      file.name = name.trim();
-    }
-    
-    if (content !== undefined) {
-      file.content = content;
-      file.size = Buffer.byteLength(content, 'utf8');
-    }
-    
-    file.updatedAt = new Date();
-    
-    userFileList[fileIndex] = file;
-    userFiles.set(req.user.id, userFileList);
-    
-    res.json(file);
-  } catch (error) {
-    console.error('Error updating file:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Delete a file
-app.delete('/api/files/:id', requireAuth, (req, res) => {
-  try {
-    const userFileList = userFiles.get(req.user.id) || [];
-    const fileIndex = userFileList.findIndex(f => f.id === req.params.id);
-    
-    if (fileIndex === -1) {
-      return res.status(404).json({ error: 'File not found' });
-    }
-    
-    const deletedFile = userFileList.splice(fileIndex, 1)[0];
-    userFiles.set(req.user.id, userFileList);
-    
-    res.json({ message: 'File deleted successfully', file: deletedFile });
-  } catch (error) {
-    console.error('Error deleting file:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Folder Management API Routes
-
-// Create a new folder
-app.post('/api/folders', requireAuth, (req, res) => {
-  try {
-    const { name } = req.body;
-    
-    if (!name || !name.trim()) {
-      return res.status(400).json({ error: 'Folder name is required' });
-    }
-    
-    const userFolderList = userFolders.get(req.user.id) || [];
-    
-    // Check if folder name already exists
-    if (userFolderList.some(folder => folder.name === name.trim())) {
-      return res.status(409).json({ error: 'Folder name already exists' });
-    }
-    
-    const newFolder = {
-      id: uuidv4(),
-      name: name.trim(),
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      userId: req.user.id
-    };
-    
-    userFolderList.push(newFolder);
-    userFolders.set(req.user.id, userFolderList);
-    
-    res.status(201).json(newFolder);
-  } catch (error) {
-    console.error('Error creating folder:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Update a folder
-app.put('/api/folders/:id', requireAuth, (req, res) => {
-  try {
-    const { name } = req.body;
-    const userFolderList = userFolders.get(req.user.id) || [];
-    const folderIndex = userFolderList.findIndex(f => f.id === req.params.id);
-    
-    if (folderIndex === -1) {
-      return res.status(404).json({ error: 'Folder not found' });
-    }
-    
-    const folder = userFolderList[folderIndex];
-    
-    if (name && name.trim() !== folder.name) {
-      // Check if new name already exists
-      if (userFolderList.some(f => f.name === name.trim() && f.id !== folder.id)) {
-        return res.status(409).json({ error: 'Folder name already exists' });
-      }
-      folder.name = name.trim();
-      folder.updatedAt = new Date();
-    }
-    
-    userFolderList[folderIndex] = folder;
-    userFolders.set(req.user.id, userFolderList);
-    
-    res.json(folder);
-  } catch (error) {
-    console.error('Error updating folder:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Delete a folder
-app.delete('/api/folders/:id', requireAuth, (req, res) => {
-  try {
-    const userFolderList = userFolders.get(req.user.id) || [];
-    const folderIndex = userFolderList.findIndex(f => f.id === req.params.id);
-    
-    if (folderIndex === -1) {
-      return res.status(404).json({ error: 'Folder not found' });
-    }
-    
-    const deletedFolder = userFolderList.splice(folderIndex, 1)[0];
-    userFolders.set(req.user.id, userFolderList);
-    
-    res.json({ message: 'Folder deleted successfully', folder: deletedFolder });
-  } catch (error) {
-    console.error('Error deleting folder:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Helper function to generate file preview
-const generateFilePreview = (file) => {
-  const preview = {
-    id: file.id,
-    name: file.name,
-    type: file.type || 'document',
-    size: file.size || 0,
-    mimeType: file.mimeType || 'text/plain',
-    createdAt: file.createdAt,
-    updatedAt: file.updatedAt,
-    owner: file.owner,
-    tags: file.tags || [],
-    previewContent: null,
-    previewType: 'text'
-  };
-  
-  const content = file.content || '';
-  
-  // Determine preview type and generate preview content
-  if (file.mimeType === 'text/markdown' || file.name.endsWith('.md')) {
-    // Generate Markdown preview (simplified HTML representation)
-    preview.previewType = 'markdown';
-    preview.previewContent = generateMarkdownPreview(content);
-  } else if (file.mimeType === 'text/plain' || file.name.endsWith('.txt')) {
-    // Generate text preview (first few lines)
-    preview.previewType = 'text';
-    preview.previewContent = generateTextPreview(content);
-  } else if (file.mimeType === 'application/json' || file.name.endsWith('.json')) {
-    // Generate JSON preview (formatted)
-    preview.previewType = 'json';
-    preview.previewContent = generateJsonPreview(content);
-  } else if (file.type === 'symlink') {
-    // Generate symlink preview
-    preview.previewType = 'symlink';
-    preview.previewContent = `Symlink → ${file.symlinkTarget || 'Unknown target'}`;
-  } else {
-    // Default text preview
-    preview.previewType = 'text';
-    preview.previewContent = generateTextPreview(content);
-  }
-  
-  return preview;
+// Generate password reset token
+const generateResetToken = () => {
+  return require('crypto').randomBytes(32).toString('hex');
 };
 
-const generateMarkdownPreview = (content) => {
-  if (!content || content.length === 0) {
-    return '<p><em>Empty document</em></p>';
-  }
+// Simulate email sending (console output)
+const sendPasswordResetEmail = (email, token) => {
+  const resetLink = `http://localhost:3000/auth/reset-password?token=${token}`;
   
-  // Simple Markdown to HTML conversion (basic implementation)
-  let preview = content.substring(0, 300); // Limit to first 300 chars
+  console.log('\n' + '='.repeat(80));
+  console.log('📧 SIMULATED EMAIL SENT');
+  console.log('='.repeat(80));
+  console.log(`To: ${email}`);
+  console.log(`Subject: Password Reset Request - BDPADrive`);
+  console.log(`\nBody:`);
+  console.log(`Hello,`);
+  console.log(`\nWe received a request to reset your password for your BDPADrive account.`);
+  console.log(`\nClick the link below to reset your password:`);
+  console.log(`${resetLink}`);
+  console.log(`\nThis link will expire in 1 hour.`);
+  console.log(`\nIf you didn't request this password reset, please ignore this email.`);
+  console.log(`\nBest regards,`);
+  console.log(`The BDPADrive Team`);
+  console.log('='.repeat(80) + '\n');
   
-  // Convert basic Markdown syntax
-  preview = preview
-    .replace(/^# (.*$)/gm, '<h1>$1</h1>')
-    .replace(/^## (.*$)/gm, '<h2>$1</h2>')
-    .replace(/^### (.*$)/gm, '<h3>$1</h3>')
-    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.*?)\*/g, '<em>$1</em>')
-    .replace(/`(.*?)`/g, '<code>$1</code>')
-    .replace(/^\- (.*$)/gm, '<li>$1</li>')
-    .replace(/\n/g, '<br>');
-  
-  // Wrap list items
-  preview = preview.replace(/(<li>.*?<\/li>)/g, '<ul>$1</ul>');
-  
-  // Add ellipsis if content was truncated
-  if (content.length > 300) {
-    preview += '<br><em>...</em>';
-  }
-  
-  return preview;
+  return true; // Simulate successful email sending
 };
 
-const generateTextPreview = (content) => {
-  if (!content || content.length === 0) {
-    return 'Empty document';
-  }
-  
-  // Get first 3 lines or 200 characters, whichever is shorter
-  const lines = content.split('\n').slice(0, 3);
-  let preview = lines.join('\n');
-  
-  if (preview.length > 200) {
-    preview = preview.substring(0, 200) + '...';
-  } else if (content.split('\n').length > 3) {
-    preview += '\n...';
-  }
-  
-  return preview;
-};
-
-const generateJsonPreview = (content) => {
-  if (!content || content.length === 0) {
-    return 'Empty JSON';
-  }
-  
-  try {
-    const parsed = JSON.parse(content);
-    const formatted = JSON.stringify(parsed, null, 2);
-    
-    // Limit to first 300 characters
-    if (formatted.length > 300) {
-      return formatted.substring(0, 300) + '\n...';
+// Clean up expired reset tokens
+const cleanupExpiredResetTokens = () => {
+  const now = Date.now();
+  for (const [token, data] of passwordResetTokens.entries()) {
+    if (data.expiresAt < now) {
+      passwordResetTokens.delete(token);
     }
-    
-    return formatted;
-  } catch (error) {
-    // If not valid JSON, treat as text
-    return generateTextPreview(content);
   }
 };
 
-// GET /api/v1/filesystem/:username/:path
-app.get('/api/v1/filesystem/:username/:path', requireAuth, requireUsername, (req, res) => {
+// Password Recovery API Endpoints
+
+// POST /api/auth/forgot-password - Request password reset
+app.post('/api/auth/forgot-password', authLimiter, (req, res) => {
   try {
-    const targetUsername = req.params.username;
-    const path = req.params.path;
-    const { preview } = req.query;
+    const { email } = req.body;
     
-    // Check if user can access this username's files
-    if (targetUsername !== req.username && req.user.email !== 'admin@bdpadrive.com') {
-      return res.status(403).json({ success: false, error: 'Access denied' });
-    }
-    
-    const targetUser = Array.from(users.values()).find(u => u.email === targetUsername);
-    if (!targetUser) {
-      return res.status(404).json({ success: false, error: 'User not found' });
-    }
-    
-    const userFileList = userFiles.get(targetUser.id) || [];
-    const userFolderList = userFolders.get(targetUser.id) || [];
-    
-    // Look for file first
-    const file = userFileList.find(f => f.name === path);
-    if (file) {
-      const node = {
-        name: file.name,
-        isDirectory: false,
-        size: file.size || 0,
-        mimeType: file.mimeType || 'text/plain',
-        lastModified: new Date(file.updatedAt || file.createdAt).toISOString(),
-        content: file.content || '',
-        owner: file.owner || targetUsername,
-        createdAt: new Date(file.createdAt).toISOString(),
-        tags: file.tags || []
-      };
-      
-      // Add symlink-specific properties
-      if (file.type === 'symlink') {
-        node.isSymlink = true;
-        node.symlinkTarget = file.symlinkTarget;
-        const validation = validateSymlinkTarget(file.symlinkTarget, userFileList, userFolderList);
-        node.symlinkBroken = validation.broken;
-        if (validation.broken) {
-          node.symlinkError = validation.reason;
-        }
-      }
-      
-      // Generate preview if requested
-      if (preview === 'true') {
-        const preview = generateFilePreview(file);
-        node.previewContent = preview.previewContent;
-        node.previewType = preview.previewType;
-      }
-      
-      return res.json({
-        success: true,
-        node: node
+    if (!email || !email.trim()) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Email address is required' 
       });
     }
     
-    // Look for folder
-    const folder = userFolderList.find(f => f.name === path);
-    if (folder) {
-      return res.json({
-        success: true,
-        node: {
-          name: folder.name,
-          isDirectory: true,
-          lastModified: new Date(folder.updatedAt || folder.createdAt).toISOString(),
-          owner: folder.owner || targetUsername,
-          createdAt: new Date(folder.createdAt).toISOString(),
-          children: [] // For now, flat structure
-        }
+    const emailLower = email.toLowerCase().trim();
+    const user = users.get(emailLower);
+    
+    // Always return success to prevent email enumeration
+    // But only send email if user exists
+    if (user) {
+      const resetToken = generateResetToken();
+      const expiresAt = Date.now() + (60 * 60 * 1000); // 1 hour
+      
+      passwordResetTokens.set(resetToken, {
+        email: emailLower,
+        expiresAt: expiresAt,
+        used: false
+      });
+      
+      // Simulate sending email
+      sendPasswordResetEmail(emailLower, resetToken);
+    }
+    
+    res.json({
+      success: true,
+      message: 'If an account with that email exists, a password reset link has been sent.'
+    });
+    
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Internal server error' 
+    });
+  }
+});
+
+// GET /api/auth/reset-password/:token - Verify reset token
+app.get('/api/auth/reset-password/:token', (req, res) => {
+  try {
+    const { token } = req.params;
+    
+    cleanupExpiredResetTokens();
+    
+    const tokenData = passwordResetTokens.get(token);
+    
+    if (!tokenData || tokenData.used || tokenData.expiresAt < Date.now()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid or expired reset token'
       });
     }
     
-    res.status(404).json({ success: false, error: 'File or directory not found' });
+    res.json({
+      success: true,
+      email: tokenData.email,
+      expiresAt: tokenData.expiresAt
+    });
+    
   } catch (error) {
-    console.error('Get file error:', error);
-    res.status(500).json({ success: false, error: 'Internal server error' });
+    console.error('Reset token verification error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Internal server error' 
+    });
   }
 });
+
+// POST /api/auth/reset-password - Reset password using token
+app.post('/api/auth/reset-password', authLimiter, async (req, res) => {
+  try {
+    const { token, password } = req.body;
+    
+    if (!token || !password) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Token and new password are required' 
+      });
+    }
+    
+    cleanupExpiredResetTokens();
+    
+    const tokenData = passwordResetTokens.get(token);
+    
+    if (!tokenData || tokenData.used || tokenData.expiresAt < Date.now()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid or expired reset token'
+      });
+    }
+    
+    // Validate password strength
+    if (password.length < 8) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Password must be at least 8 characters long' 
+      });
+    }
+    
+    const hasUppercase = /[A-Z]/.test(password);
+    const hasLowercase = /[a-z]/.test(password);
+    const hasNumber = /\d/.test(password);
+    const hasSpecialChar = /[!@#$%^&*(),.?":{}|<>]/.test(password);
+    
+    if (!hasUppercase || !hasLowercase || !hasNumber || !hasSpecialChar) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Password must contain uppercase, lowercase, number, and special character' 
+      });
+    }
+    
+    // Update user password
+    const user = users.get(tokenData.email);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+    
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(password, 10);
+    user.password = hashedPassword;
+    user.updatedAt = new Date();
+    
+    // Mark token as used
+    tokenData.used = true;
+    
+    console.log(`Password reset successful for user: ${tokenData.email}`);
+    
+    res.json({
+      success: true,
+      message: 'Password reset successful. You can now sign in with your new password.'
+    });
+    
+  } catch (error) {
+    console.error('Password reset error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Internal server error' 
+    });
+  }
+});
+
+// Clean up expired reset tokens every 30 minutes
+setInterval(cleanupExpiredResetTokens, 30 * 60 * 1000);
 
 // ================================
 // 404 handler
