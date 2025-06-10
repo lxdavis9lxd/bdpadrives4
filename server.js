@@ -687,6 +687,31 @@ const createMetaNode = (data, owner) => {
 };
 
 // ================================
+// Legacy User Info Endpoint (for frontend compatibility)
+// ================================
+
+// GET /api/user/me - Get current user information
+app.get('/api/user/me', requireAuth, (req, res) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ success: false, error: 'User not authenticated' });
+    }
+    
+    // Return user info in the format the frontend expects
+    res.json({
+      id: req.user.id,
+      username: req.user.email, // Use email as username for consistency
+      email: req.user.email,
+      createdAt: req.user.createdAt,
+      success: true
+    });
+  } catch (error) {
+    console.error('Error getting user info:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+// ================================
 // User Endpoints
 // ================================
 

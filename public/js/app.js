@@ -1157,6 +1157,76 @@ class BDPADrive {
         }
     }
 
+    // Reset create form to initial state
+    resetCreateForm() {
+        const createForm = document.getElementById('createForm');
+        const createBtn = document.getElementById('createBtn');
+        const newItemForm = document.getElementById('newItemForm');
+        const createOptions = document.querySelectorAll('.create-option');
+        
+        if (createForm) createForm.style.display = 'none';
+        if (createBtn) createBtn.style.display = 'none';
+        if (newItemForm) newItemForm.reset();
+        
+        // Remove selection highlighting
+        createOptions.forEach(opt => opt.classList.remove('border-primary'));
+        
+        // Hide all conditional fields
+        const descriptionField = document.getElementById('descriptionField');
+        const symlinkTargetField = document.getElementById('symlinkTargetField');
+        const tagsField = document.getElementById('tagsField');
+        
+        if (descriptionField) descriptionField.style.display = 'none';
+        if (symlinkTargetField) symlinkTargetField.style.display = 'none';
+        if (tagsField) tagsField.style.display = 'none';
+    }
+
+    // Toast notification system
+    showToast(message, type = 'info') {
+        // Create toast container if it doesn't exist
+        let toastContainer = document.getElementById('toast-container');
+        if (!toastContainer) {
+            toastContainer = document.createElement('div');
+            toastContainer.id = 'toast-container';
+            toastContainer.className = 'position-fixed top-0 end-0 p-3';
+            toastContainer.style.zIndex = '9999';
+            document.body.appendChild(toastContainer);
+        }
+
+        // Create toast element
+        const toastId = `toast-${Date.now()}`;
+        const toast = document.createElement('div');
+        toast.id = toastId;
+        toast.className = `toast align-items-center text-white bg-${type === 'success' ? 'success' : type === 'error' ? 'danger' : type === 'warning' ? 'warning' : 'info'} border-0`;
+        toast.setAttribute('role', 'alert');
+        toast.setAttribute('aria-live', 'assertive');
+        toast.setAttribute('aria-atomic', 'true');
+        
+        toast.innerHTML = `
+            <div class="d-flex">
+                <div class="toast-body">
+                    ${message}
+                </div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+        `;
+
+        toastContainer.appendChild(toast);
+
+        // Initialize and show toast
+        const bsToast = new bootstrap.Toast(toast, {
+            autohide: true,
+            delay: type === 'error' ? 5000 : 3000 // Error messages stay longer
+        });
+        
+        bsToast.show();
+
+        // Clean up after toast is hidden
+        toast.addEventListener('hidden.bs.toast', () => {
+            toast.remove();
+        });
+    }
+
     // Enhanced error handling and loading states
     showLoading(elementId, show = true) {
         const element = document.getElementById(elementId);
