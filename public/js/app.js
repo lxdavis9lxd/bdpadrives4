@@ -15,6 +15,7 @@ class BDPADrive {
         this.loadUserData();
         this.initializeSearch();
         this.initializePreviewMode();
+        this.startHealthCheck(); // Start the health check for server connectivity
     }
 
     bindEvents() {
@@ -156,35 +157,34 @@ class BDPADrive {
     async signin() {
         const email = document.getElementById('signinEmail').value.trim();
         const password = document.getElementById('signinPassword').value;
+        const submitBtn = document.getElementById('signinSubmit');
 
         if (!email || !password) {
-            this.showToast('Please fill in all fields', 'warning');
+            this.showError('Please fill in all fields');
             return;
         }
 
         try {
-            // Use legacy auth for now to get user data, then use v1 API
-            const response = await fetch('/api/auth/login', {
+            this.showLoading('signinSubmit', true);
+            
+            const data = await this.apiCall('/api/auth/login', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
                 body: JSON.stringify({ email, password })
-            });
+            }, false);
 
-            const data = await response.json();
-
-            if (response.ok) {
-                this.showToast('Sign in successful!', 'success');
+            if (data.success) {
+                this.showSuccess('Sign in successful!');
                 setTimeout(() => {
                     window.location.href = data.redirectUrl || '/dashboard';
                 }, 1000);
             } else {
-                this.showToast(data.error || 'Sign in failed', 'error');
+                this.showError(data.error || 'Sign in failed');
             }
         } catch (error) {
             console.error('Sign in error:', error);
-            this.showToast('Sign in failed. Please try again.', 'error');
+            this.showError('Sign in failed. Please check your credentials and try again.');
+        } finally {
+            this.showLoading('signinSubmit', false);
         }
     }
 
@@ -1103,6 +1103,192 @@ class BDPADrive {
             console.error('Delete account error:', error);
             this.showToast('Failed to delete account', 'error');
         }
+    }
+
+    // Enhanced error handling and loading states
+    showLoading(elementId, show = true) {
+        const element = document.getElementById(elementId);
+        if (!element) return;
+        
+        if (show) {
+            const spinner = document.createElement('div');
+            spinner.className = 'loading-spinner me-2';
+            spinner.id = `${elementId}-spinner`;
+            element.prepend(spinner);
+            element.disabled = true;
+        } else {
+            const spinner = document.getElementById(`${elementId}-spinner`);
+            if (spinner) spinner.remove();
+            element.disabled = false;
+        }
+    }
+
+    showError(message, container = 'body') {
+        const alert = document.createElement('div');
+        alert.className = 'alert alert-danger alert-dismissible fade show position-fixed';
+        alert.style.cssText = 'top: 20px; right: 20px; z-index: 9999; max-width: 400px;';
+        alert.innerHTML = `
+            ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+        
+        document.querySelector(container).appendChild(alert);
+        
+        // Auto-dismiss after 5 seconds
+        setTimeout(() => {
+            if (alert.parentNode) {
+                alert.remove();
+            }
+        }, 5000);
+    }
+
+    showSuccess(message, container = 'body') {
+        const alert = document.createElement('div');
+        alert.className = 'alert alert-success alert-dismissible fade show position-fixed';
+        alert.style.cssText = 'top: 20px; right: 20px; z-index: 9999; max-width: 400px;';
+        alert.innerHTML = `
+            ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+        
+        document.querySelector(container).appendChild(alert);
+        
+        // Auto-dismiss after 3 seconds
+        setTimeout(() => {
+            if (alert.parentNode) {
+                alert.remove();
+            }
+        }, 3000);
+    }
+
+    // Enhanced fetch with error handling and retries
+    async fetchWithRetry(url, options = {}, retries = 3) {
+        for (let i = 0; i < retries; i++) {
+            try {
+                const response = await fetch(url, {
+                    ...options,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...options.headers
+                    }
+                });
+
+                // Handle different error status codes
+                if (response.status === 555) {
+                    throw new Error('Server temporarily unavailable (555). Retrying...');
+                }
+
+                if (response.status === 429) {
+                    throw new Error('Too many requests. Please wait a moment and try again.');
+                }
+
+                if (response.status === 401) {
+                    // Redirect to login for authentication errors
+                    window.location.href = '/auth';
+                    return;
+                }
+
+                if (response.status === 403) {
+                    throw new Error('Access denied. You do not have permission for this action.');
+                }
+
+                if (response.status === 404) {
+                    throw new Error('The requested resource was not found.');
+                }
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                return response;
+            } catch (error) {
+                console.error(`Attempt ${i + 1} failed:`, error);
+                
+                if (i === retries - 1) {
+                    // Last attempt failed
+                    throw error;
+                }
+                
+                // Wait before retrying (exponential backoff)
+                const delay = Math.pow(2, i) * 1000;
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
+        }
+    }
+
+    // Enhanced API call wrapper
+    async apiCall(endpoint, options = {}, showLoading = true) {
+        const loadingId = `api-call-${Date.now()}`;
+        
+        try {
+            if (showLoading) {
+                this.showGlobalLoading(true);
+            }
+
+            const response = await this.fetchWithRetry(endpoint, options);
+            const data = await response.json();
+
+            if (showLoading) {
+                this.showGlobalLoading(false);
+            }
+
+            return data;
+        } catch (error) {
+            if (showLoading) {
+                this.showGlobalLoading(false);
+            }
+            
+            this.showError(error.message);
+            throw error;
+        }
+    }
+
+    showGlobalLoading(show = true) {
+        let loader = document.getElementById('global-loader');
+        
+        if (show && !loader) {
+            loader = document.createElement('div');
+            loader.id = 'global-loader';
+            loader.className = 'position-fixed d-flex align-items-center justify-content-center';
+            loader.style.cssText = `
+                top: 0; left: 0; width: 100%; height: 100%; 
+                background: rgba(0,0,0,0.3); z-index: 9999;
+                backdrop-filter: blur(2px);
+            `;
+            loader.innerHTML = `
+                <div class="bg-white rounded-3 p-4 text-center shadow">
+                    <div class="loading-spinner mx-auto mb-3" style="width: 3rem; height: 3rem;"></div>
+                    <div class="text-muted">Loading...</div>
+                </div>
+            `;
+            document.body.appendChild(loader);
+        } else if (!show && loader) {
+            loader.remove();
+        }
+    }
+
+    // Enhanced error recovery
+    handleConnectionError() {
+        this.showError(`
+            <strong>Connection Error</strong><br>
+            Please check your internet connection and try again.
+            <button class="btn btn-sm btn-outline-primary ms-2" onclick="location.reload()">
+                Reload Page
+            </button>
+        `);
+    }
+
+    // Check server health periodically
+    startHealthCheck() {
+        setInterval(async () => {
+            try {
+                await fetch('/api/test/random-error');
+            } catch (error) {
+                console.warn('Health check failed:', error);
+                // Could show offline indicator here
+            }
+        }, 30000); // Check every 30 seconds
     }
 }
 

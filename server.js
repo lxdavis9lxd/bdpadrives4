@@ -8,9 +8,77 @@ const { v4: uuidv4 } = require('uuid');
 const rateLimit = require('express-rate-limit');
 const { marked } = require('marked');
 const cookieParser = require('cookie-parser');
+const helmet = require('helmet');
+const { body, validationResult } = require('express-validator');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Security middleware
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net"],
+      imgSrc: ["'self'", "data:", "https:"],
+      fontSrc: ["'self'", "https://cdn.jsdelivr.net"],
+      connectSrc: ["'self'"],
+      frameSrc: ["'none'"],
+      objectSrc: ["'none'"],
+      upgradeInsecureRequests: [],
+    },
+  },
+  hsts: {
+    maxAge: 31536000,
+    includeSubDomains: true,
+    preload: true
+  }
+}));
+
+// CORS configuration (after security headers)
+app.use(cors({
+  origin: process.env.NODE_ENV === 'production' 
+    ? ['https://yourdomain.com'] // Replace with actual domain in production
+    : true, // Allow all origins in development
+  credentials: true
+}));
+
+// Input sanitization helper
+const sanitizeInput = (input) => {
+  if (typeof input !== 'string') return input;
+  return input
+    .replace(/[<>'"]/g, '') // Remove potential XSS characters
+    .trim();
+};
+
+// HTML output sanitization helper  
+const sanitizeHTML = (html) => {
+  if (typeof html !== 'string') return html;
+  return html
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#x27;')
+    .replace(/\//g, '&#x2F;');
+};
+
+// Validation middleware
+const validateInput = (validations) => {
+  return async (req, res, next) => {
+    await Promise.all(validations.map(validation => validation.run(req)));
+    
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Invalid input data',
+        details: errors.array()
+      });
+    }
+    next();
+  };
+};
 
 // Rate limiting
 const limiter = rateLimit({
@@ -26,7 +94,6 @@ const authLimiter = rateLimit({
 
 // Middleware
 app.use(limiter);
-app.use(cors());
 app.use(cookieParser());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -352,15 +419,30 @@ app.get('/search', requireAuth, async (req, res) => {
       tags = '', 
       owner = '', 
       minSize = '', 
-      maxSize = '' 
+      maxSize = '',
+      page = '1',
+      limit = '20'
     } = req.query;
+    
+    // Parse pagination parameters
+    const currentPage = Math.max(1, parseInt(page) || 1);
+    const itemsPerPage = Math.min(50, Math.max(5, parseInt(limit) || 20)); // Limit between 5-50 items per page
+    const offset = (currentPage - 1) * itemsPerPage;
     
     const userFileList = userFiles.get(req.user.id) || [];
     const userFolderList = userFolders.get(req.user.id) || [];
     
     let searchResults = {
       files: [],
-      folders: []
+      folders: [],
+      pagination: {
+        currentPage,
+        itemsPerPage,
+        totalItems: 0,
+        totalPages: 0,
+        hasNext: false,
+        hasPrevious: false
+      }
     };
     
     if (query.trim()) {
@@ -473,6 +555,36 @@ app.get('/search', requireAuth, async (req, res) => {
       };
     }
     
+    // Apply pagination to search results
+    if (searchResults.files.length || searchResults.folders.length) {
+      // Combine files and folders for pagination
+      const allItems = [...searchResults.folders, ...searchResults.files];
+      const totalItems = allItems.length;
+      const totalPages = Math.ceil(totalItems / itemsPerPage);
+      
+      // Apply pagination
+      const paginatedItems = allItems.slice(offset, offset + itemsPerPage);
+      
+      // Separate back into files and folders
+      const paginatedFiles = paginatedItems.filter(item => item.content !== undefined);
+      const paginatedFolders = paginatedItems.filter(item => item.content === undefined);
+      
+      searchResults = {
+        files: paginatedFiles,
+        folders: paginatedFolders,
+        pagination: {
+          currentPage,
+          itemsPerPage,
+          totalItems,
+          totalPages,
+          hasNext: currentPage < totalPages,
+          hasPrevious: currentPage > 1,
+          startIndex: offset + 1,
+          endIndex: Math.min(offset + itemsPerPage, totalItems)
+        }
+      };
+    }
+    
     const html = await res.locals.renderLayout('search', { 
       title: 'BDPADrive - Search Results',
       query,
@@ -483,6 +595,8 @@ app.get('/search', requireAuth, async (req, res) => {
       owner,
       minSize,
       maxSize,
+      page: currentPage,
+      limit: itemsPerPage,
       results: searchResults
     });
     res.send(html);
@@ -2013,6 +2127,7 @@ app.post('/api/v1/filesystem/:username/:path/lock', requireAuth, requireUsername
         expiresAt: lockExpiry
       });
       
+      
     } else if (action === 'release') {
       const existingLock = fileLocks.get(lockKey);
       
@@ -2666,27 +2781,131 @@ app.post('/api/auth/reset-password', authLimiter, async (req, res) => {
 setInterval(cleanupExpiredResetTokens, 30 * 60 * 1000);
 
 // ================================
-// 404 handler
-app.use(async (req, res) => {
+// Enhanced Error Handling and 404 Handler
+// ================================
+
+// API endpoint that randomly returns 555 errors for testing error handling
+app.get('/api/test/random-error', requireAuth, (req, res) => {
+  // 10% chance of returning 555 error
+  if (Math.random() < 0.1) {
+    return res.status(555).json({ 
+      success: false, 
+      error: 'Random server error for testing',
+      code: 555
+    });
+  }
+  
+  res.json({ 
+    success: true, 
+    message: 'API is working normally',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Enhanced 404 handler
+app.use(async (req, res, next) => {
   try {
+    // For API requests, return JSON 404
+    if (req.path.startsWith('/api/')) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'API endpoint not found',
+        path: req.path,
+        method: req.method
+      });
+    }
+    
+    // For web requests, render 404 page
     const html = await res.locals.renderLayout('404', { 
-      title: 'Page Not Found - BDPADrive'
+      title: 'Page Not Found - BDPADrive',
+      requestedPath: req.path
     });
     res.status(404).send(html);
   } catch (err) {
     console.error('Error rendering 404 page:', err);
-    res.status(404).send('Page Not Found');
+    res.status(404).send(`
+      <!DOCTYPE html>
+      <html>
+      <head><title>404 - Page Not Found</title></head>
+      <body>
+        <h1>404 - Page Not Found</h1>
+        <p>The requested page could not be found.</p>
+        <a href="/">Go Home</a>
+      </body>
+      </html>
+    `);
   }
 });
 
-// Error handler
+// Enhanced global error handler
 app.use((err, req, res, next) => {
-  console.error(err.stack);
+  console.error('Global error handler:', err);
+  
+  // Don't leak error details in production
+  const isDevelopment = process.env.NODE_ENV !== 'production';
   
   if (req.path.startsWith('/api/')) {
-    res.status(500).json({ error: 'Internal server error' });
+    // API error response
+    const errorResponse = {
+      success: false,
+      error: isDevelopment ? err.message : 'Internal server error',
+      timestamp: new Date().toISOString()
+    };
+    
+    if (isDevelopment) {
+      errorResponse.stack = err.stack;
+    }
+    
+    // Handle specific error types
+    if (err.name === 'ValidationError') {
+      return res.status(400).json({
+        ...errorResponse,
+        error: 'Validation failed',
+        details: err.details
+      });
+    }
+    
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({
+        ...errorResponse,
+        error: 'File too large'
+      });
+    }
+    
+    res.status(err.status || 500).json(errorResponse);
   } else {
-    res.status(500).send('Something went wrong!');
+    // Web page error response
+    try {
+      res.status(err.status || 500).send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Error - BDPADrive</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+        </head>
+        <body class="bg-light">
+          <div class="container mt-5">
+            <div class="row justify-content-center">
+              <div class="col-md-6 text-center">
+                <div class="card">
+                  <div class="card-body">
+                    <h1 class="text-danger">⚠️ Error</h1>
+                    <p class="text-muted">${isDevelopment ? sanitizeHTML(err.message) : 'Something went wrong. Please try again.'}</p>
+                    <a href="/" class="btn btn-primary">Go Home</a>
+                    <button onclick="history.back()" class="btn btn-secondary">Go Back</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </body>
+        </html>
+      `);
+    } catch (renderErr) {
+      console.error('Error rendering error page:', renderErr);
+      res.status(500).send('Internal Server Error');
+    }
   }
 });
 

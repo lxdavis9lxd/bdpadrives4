@@ -222,6 +222,132 @@
                     </div>
                 <% } %>
             <% } %>
+            
+            <!-- Pagination Controls -->
+            <% if (results.pagination && results.pagination.totalPages > 1) { %>
+                <div class="d-flex justify-content-between align-items-center mt-5">
+                    <div class="small text-muted">
+                        Showing <%= results.pagination.startIndex %>-<%= results.pagination.endIndex %> 
+                        of <%= results.pagination.totalItems %> items
+                    </div>
+                    
+                    <nav aria-label="Search results pagination">
+                        <ul class="pagination pagination-sm mb-0">
+                            <!-- Previous Page -->
+                            <li class="page-item <%= !results.pagination.hasPrevious ? 'disabled' : '' %>">
+                                <a class="page-link" href="<%= !results.pagination.hasPrevious ? '#' : 
+                                   '/search?' + new URLSearchParams({
+                                     q: query || '',
+                                     type: type || 'all',
+                                     dateRange: dateRange || '',
+                                     sortBy: sortBy || 'relevance',
+                                     tags: tags || '',
+                                     owner: owner || '',
+                                     minSize: minSize || '',
+                                     maxSize: maxSize || '',
+                                     page: results.pagination.currentPage - 1,
+                                     limit: results.pagination.itemsPerPage
+                                   }).toString() %>">
+                                    <i class="bi bi-chevron-left"></i> Previous
+                                </a>
+                            </li>
+                            
+                            <!-- Page Numbers -->
+                            <% 
+                            const currentPage = results.pagination.currentPage;
+                            const totalPages = results.pagination.totalPages;
+                            const maxVisiblePages = 5;
+                            let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
+                            let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+                            
+                            if (endPage - startPage + 1 < maxVisiblePages) {
+                                startPage = Math.max(1, endPage - maxVisiblePages + 1);
+                            }
+                            %>
+                            
+                            <% if (startPage > 1) { %>
+                                <li class="page-item">
+                                    <a class="page-link" href="/search?<%= new URLSearchParams({
+                                        q: query || '',
+                                        type: type || 'all',
+                                        dateRange: dateRange || '',
+                                        sortBy: sortBy || 'relevance',
+                                        tags: tags || '',
+                                        owner: owner || '',
+                                        minSize: minSize || '',
+                                        maxSize: maxSize || '',
+                                        page: 1,
+                                        limit: results.pagination.itemsPerPage
+                                    }).toString() %>">1</a>
+                                </li>
+                                <% if (startPage > 2) { %>
+                                    <li class="page-item disabled">
+                                        <span class="page-link">...</span>
+                                    </li>
+                                <% } %>
+                            <% } %>
+                            
+                            <% for (let i = startPage; i <= endPage; i++) { %>
+                                <li class="page-item <%= i === currentPage ? 'active' : '' %>">
+                                    <a class="page-link" href="/search?<%= new URLSearchParams({
+                                        q: query || '',
+                                        type: type || 'all',
+                                        dateRange: dateRange || '',
+                                        sortBy: sortBy || 'relevance',
+                                        tags: tags || '',
+                                        owner: owner || '',
+                                        minSize: minSize || '',
+                                        maxSize: maxSize || '',
+                                        page: i,
+                                        limit: results.pagination.itemsPerPage
+                                    }).toString() %>"><%= i %></a>
+                                </li>
+                            <% } %>
+                            
+                            <% if (endPage < totalPages) { %>
+                                <% if (endPage < totalPages - 1) { %>
+                                    <li class="page-item disabled">
+                                        <span class="page-link">...</span>
+                                    </li>
+                                <% } %>
+                                <li class="page-item">
+                                    <a class="page-link" href="/search?<%= new URLSearchParams({
+                                        q: query || '',
+                                        type: type || 'all',
+                                        dateRange: dateRange || '',
+                                        sortBy: sortBy || 'relevance',
+                                        tags: tags || '',
+                                        owner: owner || '',
+                                        minSize: minSize || '',
+                                        maxSize: maxSize || '',
+                                        page: totalPages,
+                                        limit: results.pagination.itemsPerPage
+                                    }).toString() %>"><%= totalPages %></a>
+                                </li>
+                            <% } %>
+                            
+                            <!-- Next Page -->
+                            <li class="page-item <%= !results.pagination.hasNext ? 'disabled' : '' %>">
+                                <a class="page-link" href="<%= !results.pagination.hasNext ? '#' : 
+                                   '/search?' + new URLSearchParams({
+                                     q: query || '',
+                                     type: type || 'all',
+                                     dateRange: dateRange || '',
+                                     sortBy: sortBy || 'relevance',
+                                     tags: tags || '',
+                                     owner: owner || '',
+                                     minSize: minSize || '',
+                                     maxSize: maxSize || '',
+                                     page: results.pagination.currentPage + 1,
+                                     limit: results.pagination.itemsPerPage
+                                   }).toString() %>">
+                                    Next <i class="bi bi-chevron-right"></i>
+                                </a>
+                            </li>
+                        </ul>
+                    </nav>
+                </div>
+            <% } %>
         <% } else { %>
             
             <!-- Search Instructions -->

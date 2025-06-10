@@ -21,6 +21,11 @@ class DocumentEditor {
         this.isLocked = false;
         this.lockOwner = null;
         
+        // Live preview state
+        this.livePreviewEnabled = true;
+        this.previewUpdateTimeout = null;
+        this.lastPreviewUpdate = 0;
+        
         // Markdown configuration
         this.marked = null;
         this.initializeMarked();
@@ -71,24 +76,53 @@ class DocumentEditor {
     }
 
     bindEvents() {
-        // Track changes for auto-save and preview updates
-        const updateHandler = () => {
+        // Track changes for auto-save and live preview updates
+        const updateHandler = (e) => {
             this.hasUnsavedChanges = true;
             this.updateSaveStatus('Unsaved changes...');
-            this.renderPreview();
+            
+            // Trigger live preview update with debouncing
+            if (this.livePreviewEnabled) {
+                this.debouncedPreviewUpdate();
+            }
         };
 
+        // Real-time preview updates with input events
         this.editor.addEventListener('input', updateHandler);
         this.editor.addEventListener('paste', updateHandler);
+        this.editor.addEventListener('keyup', updateHandler);
         
-        // Split view editor
+        // Split view editor with live preview
         if (this.editorSplit) {
-            this.editorSplit.addEventListener('input', () => {
+            this.editorSplit.addEventListener('input', (e) => {
                 this.hasUnsavedChanges = true;
                 this.updateSaveStatus('Unsaved changes...');
-                this.renderPreviewSplit();
+                
+                // Live preview update for split view
+                if (this.livePreviewEnabled) {
+                    this.debouncedPreviewUpdateSplit();
+                }
+                
                 // Sync content between editors
                 this.editor.value = this.editorSplit.value;
+            });
+            
+            this.editorSplit.addEventListener('keyup', (e) => {
+                if (this.livePreviewEnabled) {
+                    this.debouncedPreviewUpdateSplit();
+                }
+            });
+        }
+
+        // Live preview toggle
+        const livePreviewToggle = document.getElementById('livePreviewToggle');
+        if (livePreviewToggle) {
+            livePreviewToggle.addEventListener('change', (e) => {
+                this.livePreviewEnabled = e.target.checked;
+                if (this.livePreviewEnabled) {
+                    this.renderPreview();
+                    this.renderPreviewSplit();
+                }
             });
         }
 
@@ -177,6 +211,7 @@ class DocumentEditor {
             const markdown = this.editor.value;
             const html = this.marked.parse(markdown || '# Start typing your markdown here...\n\nYour preview will appear as you type.');
             this.previewPanel.innerHTML = html;
+            this.showPreviewUpdateIndicator();
         } catch (error) {
             console.error('Markdown parsing error:', error);
             this.previewPanel.innerHTML = '<p class="text-danger">Error rendering markdown preview</p>';
@@ -190,9 +225,37 @@ class DocumentEditor {
             const markdown = this.editorSplit.value;
             const html = this.marked.parse(markdown || '# Start typing your markdown here...\n\nYour preview will appear as you type.');
             this.previewSplit.innerHTML = html;
+            this.showPreviewUpdateIndicator();
         } catch (error) {
             console.error('Markdown parsing error:', error);
             this.previewSplit.innerHTML = '<p class="text-danger">Error rendering markdown preview</p>';
+        }
+    }
+
+    // Debounced preview updates for live preview functionality
+    debouncedPreviewUpdate() {
+        clearTimeout(this.previewUpdateTimeout);
+        this.previewUpdateTimeout = setTimeout(() => {
+            this.renderPreview();
+            this.lastPreviewUpdate = Date.now();
+        }, 150); // 150ms debounce for smooth typing experience
+    }
+
+    debouncedPreviewUpdateSplit() {
+        clearTimeout(this.previewUpdateTimeout);
+        this.previewUpdateTimeout = setTimeout(() => {
+            this.renderPreviewSplit();
+            this.lastPreviewUpdate = Date.now();
+        }, 150); // 150ms debounce for smooth typing experience
+    }
+
+    showPreviewUpdateIndicator() {
+        const indicator = document.getElementById('previewUpdateIndicator');
+        if (indicator) {
+            indicator.classList.remove('d-none');
+            setTimeout(() => {
+                indicator.classList.add('d-none');
+            }, 1000);
         }
     }
 
