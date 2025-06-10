@@ -126,6 +126,58 @@ class BDPADrive {
                 document.getElementById('passwordError')?.classList.add('d-none');
             });
         }
+
+        // Create item modal functionality
+        const createOptions = document.querySelectorAll('.create-option');
+        const createForm = document.getElementById('createForm');
+        const itemTypeField = document.getElementById('itemType');
+        const descriptionField = document.getElementById('descriptionField');
+        const createBtn = document.getElementById('createBtn');
+
+        createOptions.forEach(option => {
+            option.addEventListener('click', () => {
+                const type = option.dataset.type;
+                itemTypeField.value = type;
+                
+                // Show form
+                createForm.style.display = 'block';
+                createBtn.style.display = 'inline-block';
+                
+                // Hide all conditional fields first
+                const descriptionField = document.getElementById('descriptionField');
+                const symlinkTargetField = document.getElementById('symlinkTargetField');
+                const tagsField = document.getElementById('tagsField');
+                
+                if (descriptionField) descriptionField.style.display = 'none';
+                if (symlinkTargetField) symlinkTargetField.style.display = 'none';
+                if (tagsField) tagsField.style.display = 'none';
+                
+                // Show appropriate fields based on type
+                if (type === 'document') {
+                    if (descriptionField) descriptionField.style.display = 'block';
+                    if (tagsField) tagsField.style.display = 'block';
+                } else if (type === 'symlink') {
+                    if (symlinkTargetField) symlinkTargetField.style.display = 'block';
+                } else if (type === 'folder') {
+                    // Folders don't need additional fields
+                }
+                
+                // Update visual selection
+                createOptions.forEach(opt => opt.classList.remove('border-primary'));
+                option.classList.add('border-primary');
+            });
+        });
+
+        // Reset create modal when closed
+        const createModal = document.getElementById('createModal');
+        if (createModal) {
+            createModal.addEventListener('hidden.bs.modal', () => {
+                createForm.style.display = 'none';
+                createBtn.style.display = 'none';
+                document.getElementById('newItemForm')?.reset();
+                createOptions.forEach(opt => opt.classList.remove('border-primary'));
+            });
+        }
     }
 
     async loadUserData() {
