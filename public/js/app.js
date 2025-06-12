@@ -2,20 +2,34 @@
 
 class BDPADrive {
     constructor() {
+        console.log('🏗️ === BDPADrive Constructor START ===');
+        console.log('⏰ Constructor timestamp:', new Date().toISOString());
+        
         this.currentUser = null;
         this.files = [];
         this.folders = [];
         this.selectedItems = new Set();
         this.currentItemProperties = null;
+        
+        console.log('📋 Initial properties set');
+        console.log('🚀 Calling init()...');
         this.init();
+        console.log('✅ BDPADrive Constructor COMPLETE');
     }
 
     init() {
+        console.log('⚙️ === BDPADrive Init START ===');
+        console.log('🔗 Binding events...');
         this.bindEvents();
+        console.log('👤 Loading user data...');
         this.loadUserData();
+        console.log('🔍 Initializing search...');
         this.initializeSearch();
+        console.log('👁️ Initializing preview mode...');
         this.initializePreviewMode();
+        console.log('💓 Starting health check...');
         this.startHealthCheck(); // Start the health check for server connectivity
+        console.log('✅ BDPADrive Init COMPLETE');
     }
 
     bindEvents() {
@@ -30,12 +44,27 @@ class BDPADrive {
             this.signup();
         });
 
-        // Create item modal
-        document.querySelectorAll('.create-option').forEach(option => {
-            option.addEventListener('click', (e) => {
-                const type = e.currentTarget.dataset.type;
+        // Create item modal - bind using event delegation for better reliability
+        document.addEventListener('click', (e) => {
+            console.log('🖱️ Click event detected on:', e.target.tagName, e.target.className);
+            
+            const createOption = e.target.closest('.create-option');
+            if (createOption) {
+                console.log('✅ Create option found!');
+                console.log('📄 Target element:', createOption);
+                console.log('🏷️ Data type:', createOption.dataset.type);
+                
+                e.preventDefault();
+                e.stopPropagation();
+                const type = createOption.dataset.type;
+                console.log('🚀 Calling showCreateForm with type:', type);
                 this.showCreateForm(type);
-            });
+            } else {
+                // Only log if it's a relevant click (not every click on the page)
+                if (e.target.closest('.modal') || e.target.closest('.btn')) {
+                    console.log('ℹ️ Click was not on a create option');
+                }
+            }
         });
 
         // File management
@@ -63,9 +92,28 @@ class BDPADrive {
         // Modal events
         const createModal = document.getElementById('createModal');
         if (createModal) {
+            console.log('🎭 Setting up modal event listeners...');
+            
+            createModal.addEventListener('show.bs.modal', () => {
+                console.log('🎭 CREATE MODAL: About to show');
+            });
+            
+            createModal.addEventListener('shown.bs.modal', () => {
+                console.log('🎭 CREATE MODAL: Fully shown and ready for interaction');
+            });
+            
+            createModal.addEventListener('hide.bs.modal', () => {
+                console.log('🎭 CREATE MODAL: About to hide');
+            });
+            
             createModal.addEventListener('hidden.bs.modal', () => {
+                console.log('🎭 CREATE MODAL: Fully hidden, calling resetCreateForm');
                 this.resetCreateForm();
             });
+            
+            console.log('✅ Modal event listeners set up successfully');
+        } else {
+            console.warn('⚠️ createModal element not found during initialization');
         }
 
         // File operation buttons (using event delegation)
@@ -336,18 +384,70 @@ class BDPADrive {
     }
 
     showCreateForm(type) {
-        document.getElementById('itemType').value = type;
-        document.getElementById('createForm').style.display = 'block';
-        document.getElementById('createBtn').style.display = 'inline-block';
+        console.log('🎯 === showCreateForm() START ===');
+        console.log('📝 Input type:', type);
+        
+        console.log('🔍 Looking for DOM elements...');
+        const itemTypeElement = document.getElementById('itemType');
+        const createFormElement = document.getElementById('createForm');
+        const createBtnElement = document.getElementById('createBtn');
+        
+        console.log('📋 Element check results:');
+        console.log('   - itemType:', itemTypeElement ? '✅ Found' : '❌ Missing');
+        console.log('   - createForm:', createFormElement ? '✅ Found' : '❌ Missing');
+        console.log('   - createBtn:', createBtnElement ? '✅ Found' : '❌ Missing');
+        
+        if (!itemTypeElement) {
+            console.error('❌ CRITICAL: itemType element not found');
+            return;
+        }
+        if (!createFormElement) {
+            console.error('❌ CRITICAL: createForm element not found');
+            return;
+        }
+        if (!createBtnElement) {
+            console.error('❌ CRITICAL: createBtn element not found');
+            return;
+        }
+        
+        console.log('⚙️ Setting form values...');
+        itemTypeElement.value = type;
+        console.log('   - Set itemType.value to:', type);
+        
+        console.log('👁️ Making form visible...');
+        createFormElement.style.display = 'block';
+        createBtnElement.style.display = 'inline-block';
+        console.log('   - Form display set to: block');
+        console.log('   - Button display set to: inline-block');
         
         // Show/hide relevant fields
+        console.log('🔧 Configuring field visibility...');
         const descriptionField = document.getElementById('descriptionField');
         const symlinkTargetField = document.getElementById('symlinkTargetField');
         const tagsField = document.getElementById('tagsField');
         
-        descriptionField.style.display = type === 'document' ? 'block' : 'none';
-        symlinkTargetField.style.display = type === 'symlink' ? 'block' : 'none';
-        tagsField.style.display = type === 'document' ? 'block' : 'none';
+        console.log('📋 Field availability:');
+        console.log('   - descriptionField:', descriptionField ? '✅ Found' : '❌ Missing');
+        console.log('   - symlinkTargetField:', symlinkTargetField ? '✅ Found' : '❌ Missing');
+        console.log('   - tagsField:', tagsField ? '✅ Found' : '❌ Missing');
+        
+        if (descriptionField) {
+            const showDescription = type === 'document';
+            descriptionField.style.display = showDescription ? 'block' : 'none';
+            console.log('   - descriptionField display:', showDescription ? 'block' : 'none');
+        }
+        
+        if (symlinkTargetField) {
+            const showSymlink = type === 'symlink';
+            symlinkTargetField.style.display = showSymlink ? 'block' : 'none';
+            console.log('   - symlinkTargetField display:', showSymlink ? 'block' : 'none');
+        }
+        
+        if (tagsField) {
+            const showTags = type === 'document';
+            tagsField.style.display = showTags ? 'block' : 'none';
+            console.log('   - tagsField display:', showTags ? 'block' : 'none');
+        }
         
         // Update modal title
         const typeNames = {
@@ -355,7 +455,12 @@ class BDPADrive {
             folder: 'Folder',
             symlink: 'Symbolic Link'
         };
-        document.querySelector('#createModal .modal-title').textContent = `Create New ${typeNames[type]}`;
+        const modalTitle = document.querySelector('#createModal .modal-title');
+        if (modalTitle) {
+            modalTitle.textContent = `Create New ${typeNames[type]}`;
+        }
+        
+        console.log('showCreateForm completed for type:', type);
     }
 
     enforceContentLimit(textarea) {
@@ -382,13 +487,46 @@ class BDPADrive {
     }
 
     async createItem() {
-        const type = document.getElementById('itemType').value;
-        const name = document.getElementById('itemName').value.trim();
-        const description = document.getElementById('itemDescription')?.value.trim() || '';
-        const symlinkTarget = document.getElementById('symlinkTarget')?.value.trim() || '';
-        const tagsInput = document.getElementById('itemTags')?.value.trim() || '';
+        console.log('🚀 === BDPADrive.createItem() START ===');
+        console.log('⏰ Timestamp:', new Date().toISOString());
+        
+        console.log('🔍 Gathering form data...');
+        const typeElement = document.getElementById('itemType');
+        const nameElement = document.getElementById('itemName');
+        const descriptionElement = document.getElementById('itemDescription');
+        const symlinkTargetElement = document.getElementById('symlinkTarget');
+        const tagsElement = document.getElementById('itemTags');
+        
+        console.log('📋 Form elements status:');
+        console.log('   - typeElement:', typeElement ? '✅ Found' : '❌ Missing');
+        console.log('   - nameElement:', nameElement ? '✅ Found' : '❌ Missing');
+        console.log('   - descriptionElement:', descriptionElement ? '✅ Found' : '❌ Missing');
+        console.log('   - symlinkTargetElement:', symlinkTargetElement ? '✅ Found' : '❌ Missing');
+        console.log('   - tagsElement:', tagsElement ? '✅ Found' : '❌ Missing');
+        
+        if (!typeElement || !nameElement) {
+            console.error('❌ CRITICAL: Required form elements not found');
+            this.showToast('Form elements not found', 'error');
+            return;
+        }
+        
+        console.log('📝 Extracting form values...');
+        const type = typeElement.value;
+        const name = nameElement.value.trim();
+        const description = descriptionElement?.value.trim() || '';
+        const symlinkTarget = symlinkTargetElement?.value.trim() || '';
+        const tagsInput = tagsElement?.value.trim() || '';
 
+        console.log('📊 Form data extracted:');
+        console.log('   - type:', type);
+        console.log('   - name:', name);
+        console.log('   - description:', description ? `"${description.substring(0, 50)}${description.length > 50 ? '...' : ''}"` : '(empty)');
+        console.log('   - symlinkTarget:', symlinkTarget || '(empty)');
+        console.log('   - tagsInput:', tagsInput || '(empty)');
+
+        console.log('✅ Validating required fields...');
         if (!name) {
+            console.warn('⚠️ Validation failed: Name is required');
             this.showToast('Name is required', 'warning');
             return;
         }
@@ -410,15 +548,20 @@ class BDPADrive {
         }
 
         try {
+            console.log('🌐 Getting user authentication info...');
             // Get current user info to get username
             const userResponse = await fetch('/api/user/me');
             const userData = await userResponse.json();
             
+            console.log('👤 User data received:', userData);
+            
             if (!userData.username) {
+                console.error('❌ User not authenticated - no username found');
                 this.showToast('User not authenticated', 'error');
                 return;
             }
 
+            console.log('📦 Preparing item data...');
             const itemData = {
                 name: name,
                 isDirectory: type === 'folder',
@@ -428,7 +571,12 @@ class BDPADrive {
                 tags: tags.length > 0 ? tags : undefined,
                 symlinkTarget: type === 'symlink' ? symlinkTarget : undefined
             };
+            
+            console.log('📋 Final item data:', itemData);
 
+            console.log('🌐 Making API call to create item...');
+            console.log('📍 API endpoint:', `/api/v1/filesystem/${userData.username}`);
+            
             // Use v1 API to create file/folder
             const response = await fetch(`/api/v1/filesystem/${userData.username}`, {
                 method: 'POST',
@@ -438,23 +586,38 @@ class BDPADrive {
                 body: JSON.stringify(itemData)
             });
 
+            console.log('📡 API response status:', response.status, response.statusText);
+
             if (response.ok) {
+                console.log('✅ API call successful!');
                 this.showToast(`${type === 'folder' ? 'Folder' : type === 'symlink' ? 'Symlink' : 'Document'} created successfully!`, 'success');
+                console.log('🔄 Reloading page in 1 second...');
                 setTimeout(() => {
                     window.location.reload();
                 }, 1000);
             } else {
+                console.error('❌ API call failed with status:', response.status);
                 const error = await response.json();
+                console.error('📄 Error response:', error);
                 this.showToast(error.error || `Failed to create ${type}`, 'error');
             }
         } catch (error) {
-            console.error('Create item error:', error);
+            console.error('💥 CRITICAL ERROR in createItem:', error);
+            console.error('📍 Error stack:', error.stack);
             this.showToast(`Failed to create ${type}`, 'error');
         }
 
+        console.log('🎭 Closing modal...');
         // Hide modal
         const modal = bootstrap.Modal.getInstance(document.getElementById('createModal'));
-        modal.hide();
+        if (modal) {
+            modal.hide();
+            console.log('✅ Modal close initiated');
+        } else {
+            console.warn('⚠️ Modal instance not found for closing');
+        }
+        
+        console.log('🎯 === BDPADrive.createItem() END ===');
     }
 
     parseTags(tagsInput) {
@@ -1159,19 +1322,41 @@ class BDPADrive {
 
     // Reset create form to initial state
     resetCreateForm() {
+        console.log('🔄 === resetCreateForm() START ===');
+        
+        console.log('🔍 Looking for form elements to reset...');
         const createForm = document.getElementById('createForm');
         const createBtn = document.getElementById('createBtn');
         const newItemForm = document.getElementById('newItemForm');
         const createOptions = document.querySelectorAll('.create-option');
         
-        if (createForm) createForm.style.display = 'none';
-        if (createBtn) createBtn.style.display = 'none';
-        if (newItemForm) newItemForm.reset();
+        console.log('📋 Reset elements status:');
+        console.log('   - createForm:', createForm ? '✅ Found' : '❌ Missing');
+        console.log('   - createBtn:', createBtn ? '✅ Found' : '❌ Missing');
+        console.log('   - newItemForm:', newItemForm ? '✅ Found' : '❌ Missing');
+        console.log('   - createOptions:', createOptions.length, 'found');
         
-        // Remove selection highlighting
-        createOptions.forEach(opt => opt.classList.remove('border-primary'));
+        console.log('👁️ Hiding form elements...');
+        if (createForm) {
+            createForm.style.display = 'none';
+            console.log('   - createForm hidden');
+        }
+        if (createBtn) {
+            createBtn.style.display = 'none';
+            console.log('   - createBtn hidden');
+        }
+        if (newItemForm) {
+            newItemForm.reset();
+            console.log('   - newItemForm reset');
+        }
         
-        // Hide all conditional fields
+        console.log('🎨 Removing selection highlighting...');
+        createOptions.forEach((opt, index) => {
+            opt.classList.remove('border-primary');
+            console.log(`   - Option ${index + 1} (${opt.dataset.type}) highlighting removed`);
+        });
+        
+        console.log('📝 Hiding conditional fields...');
         const descriptionField = document.getElementById('descriptionField');
         const symlinkTargetField = document.getElementById('symlinkTargetField');
         const tagsField = document.getElementById('tagsField');
@@ -1422,7 +1607,20 @@ function logout() {
 }
 
 function createItem() {
-    bdpaDrive.createItem();
+    console.log('🎯 === GLOBAL createItem() CALLED ===');
+    console.log('⏰ Timestamp:', new Date().toISOString());
+    console.log('🔍 Checking bdpaDrive instance...');
+    
+    if (window.bdpaDrive) {
+        console.log('✅ bdpaDrive instance found');
+        console.log('🚀 Calling bdpaDrive.createItem()...');
+        bdpaDrive.createItem();
+    } else {
+        console.error('❌ CRITICAL: bdpaDrive instance not found');
+        console.error('Available on window:', Object.keys(window).filter(key => key.includes('bdpa')));
+    }
+    
+    console.log('📝 Global createItem() execution complete');
 }
 
 function openFolder(id) {
@@ -1825,10 +2023,18 @@ async function bulkAddTags() {
 
 // Initialize BDPADrive when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
+    console.log('🚀 === DOM CONTENT LOADED ===');
+    console.log('⏰ Timestamp:', new Date().toISOString());
+    console.log('🔧 Creating BDPADrive instance...');
+    
     bdpaDrive = new BDPADrive();
+    
+    console.log('✅ BDPADrive instance created successfully');
+    console.log('🌐 bdpaDrive available on window:', typeof window.bdpaDrive);
     
     // Load storage information for dashboard
     if (document.getElementById('storageUsed')) {
+        console.log('📊 Dashboard detected - loading storage information');
         bdpaDrive.updateStorageDisplay();
     }
     
