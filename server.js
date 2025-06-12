@@ -14,6 +14,9 @@ const { body, validationResult } = require('express-validator');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Trust proxy configuration for proper IP detection
+app.set('trust proxy', true);
+
 // Security middleware
 app.use(helmet({
   contentSecurityPolicy: {
@@ -80,16 +83,29 @@ const validateInput = (validations) => {
   };
 };
 
-// Rate limiting
+// Rate limiting with proper proxy support
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100 // limit each IP to 100 requests per windowMs
+  max: 100, // limit each IP to 100 requests per windowMs
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  trustProxy: true, // Trust proxy headers for accurate IP detection
+  keyGenerator: (req) => {
+    // Use the real IP address from proxy headers
+    return req.ip || req.connection.remoteAddress;
+  }
 });
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // limit each IP to 5 auth requests per windowMs
-  message: 'Too many authentication attempts, please try again later.'
+  max: 10, // Increased from 5 to 10 for better UX
+  message: 'Too many authentication attempts, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+  trustProxy: true,
+  keyGenerator: (req) => {
+    return req.ip || req.connection.remoteAddress;
+  }
 });
 
 // Middleware
