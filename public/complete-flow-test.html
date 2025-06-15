@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Complete Create Button Flow Test</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .console-output {
+            background: #1e1e1e;
+            color: #ffffff;
+            font-family: 'Courier New', monospace;
+            padding: 1rem;
+            border-radius: 0.375rem;
+            height: 500px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            font-size: 0.85rem;
+        }
+        .create-option {
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 2px solid transparent;
+        }
+        .create-option:hover {
+            border-color: #0d6efd;
+        }
+        .step {
+            background: #f8f9fa;
+            border-left: 4px solid #0d6efd;
+            padding: 1rem;
+            margin: 0.5rem 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-4">
+        <h1>Complete Create Button Flow Test</h1>
+        <p>This page tests the complete folder creation flow with authentication.</p>
+        
+        <div class="row mb-4">
+            <div class="col-md-8">
+                <div class="step">
+                    <h5>Step 1: Test Authentication</h5>
+                    <button class="btn btn-primary" onclick="testAuth()">Check Authentication Status</button>
+                    <div id="authStatus" class="mt-2"></div>
+                </div>
+                
+                <div class="step">
+                    <h5>Step 2: Test Create Options Click</h5>
+                    <div class="row">
+                        <div class="col-4">
+                            <div class="card text-center h-100 create-option" data-type="folder">
+                                <div class="card-body">
+                                    <h6>📁 Test Folder Creation</h6>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="step">
+                    <h5>Step 3: Test Manual Form Submission</h5>
+                    <div class="mb-3">
+                        <label for="testFolderName" class="form-label">Folder Name</label>
+                        <input type="text" class="form-control" id="testFolderName" value="test-manual-folder">
+                    </div>
+                    <button class="btn btn-success" onclick="testDirectCreateCall()">Direct Create Call</button>
+                </div>
+                
+                <div class="step">
+                    <h5>Step 4: Test Global createItem Function</h5>
+                    <button class="btn btn-warning" onclick="window.createItem()">Call Global createItem()</button>
+                </div>
+            </div>
+            
+            <div class="col-md-4">
+                <h4>Console Output</h4>
+                <div id="consoleOutput" class="console-output"></div>
+                <button class="btn btn-sm btn-secondary mt-2" onclick="clearConsole()">Clear</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Modal (Copy from dashboard) -->
+    <div class="modal fade" id="createModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Create New</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row">
+                        <div class="col-4">
+                            <div class="card text-center h-100 create-option" data-type="folder">
+                                <div class="card-body d-flex flex-column justify-content-center">
+                                    <i class="bi bi-folder text-warning" style="font-size: 3rem;"></i>
+                                    <h6 class="mt-2">Folder</h6>
+                                    <small class="text-muted">Create a new folder</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div id="createForm" class="mt-4" style="display: none;">
+                        <form id="newItemForm">
+                            <input type="hidden" id="itemType" value="">
+                            <div class="mb-3">
+                                <label for="itemName" class="form-label">Name</label>
+                                <input type="text" class="form-control" id="itemName" required>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="createBtn" style="display: none;" onclick="createItem()">Create</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/js/app.js"></script>
+    
+    <script>
+        function addLog(message) {
+            const output = document.getElementById('consoleOutput');
+            const timestamp = new Date().toLocaleTimeString();
+            output.textContent += `[${timestamp}] ${message}\n`;
+            output.scrollTop = output.scrollHeight;
+            console.log(message);
+        }
+        
+        function clearConsole() {
+            document.getElementById('consoleOutput').textContent = '';
+        }
+        
+        async function testAuth() {
+            addLog('🔍 Testing authentication...');
+            const statusDiv = document.getElementById('authStatus');
+            
+            try {
+                const response = await fetch('/api/user/me');
+                const data = await response.json();
+                
+                if (response.ok && data.username) {
+                    statusDiv.innerHTML = `<div class="alert alert-success">✅ Authenticated as: ${data.username}</div>`;
+                    addLog(`✅ Authenticated as: ${data.username}`);
+                } else {
+                    statusDiv.innerHTML = `<div class="alert alert-danger">❌ Not authenticated</div>`;
+                    addLog('❌ Not authenticated');
+                }
+            } catch (error) {
+                statusDiv.innerHTML = `<div class="alert alert-danger">❌ Auth check failed: ${error.message}</div>`;
+                addLog(`❌ Auth check failed: ${error.message}`);
+            }
+        }
+        
+        async function testDirectCreateCall() {
+            addLog('🧪 Testing direct create call...');
+            
+            // Set up form data manually
+            const itemTypeElement = document.getElementById('itemType');
+            const itemNameElement = document.getElementById('itemName');
+            const folderName = document.getElementById('testFolderName').value;
+            
+            if (itemTypeElement) itemTypeElement.value = 'folder';
+            if (itemNameElement) itemNameElement.value = folderName;
+            
+            addLog(`📝 Set form data: type=folder, name=${folderName}`);
+            
+            // Call createItem directly
+            if (window.bdpaDrive && typeof window.bdpaDrive.createItem === 'function') {
+                addLog('🚀 Calling bdpaDrive.createItem() directly...');
+                await window.bdpaDrive.createItem();
+            } else {
+                addLog('❌ bdpaDrive.createItem not available');
+            }
+        }
+        
+        // Intercept console methods to show in our output
+        const originalLog = console.log;
+        const originalError = console.error;
+        const originalWarn = console.warn;
+        
+        console.log = function(...args) {
+            addLog(args.join(' '));
+            originalLog.apply(console, args);
+        };
+        
+        console.error = function(...args) {
+            addLog('❌ ' + args.join(' '));
+            originalError.apply(console, args);
+        };
+        
+        console.warn = function(...args) {
+            addLog('⚠️ ' + args.join(' '));
+            originalWarn.apply(console, args);
+        };
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            addLog('🚀 Test page loaded');
+            addLog('📝 Testing complete create button flow');
+            
+            // Initial auth test
+            setTimeout(testAuth, 1000);
+        });
+    </script>
+</body>
+</html>

@@ -185,53 +185,16 @@ class BDPADrive {
             });
         }
 
-        // Create item modal functionality
-        const createOptions = document.querySelectorAll('.create-option');
-        const createForm = document.getElementById('createForm');
-        const itemTypeField = document.getElementById('itemType');
-        const descriptionField = document.getElementById('descriptionField');
-        const createBtn = document.getElementById('createBtn');
-
-        createOptions.forEach(option => {
-            option.addEventListener('click', () => {
-                const type = option.dataset.type;
-                itemTypeField.value = type;
-                
-                // Show form
-                createForm.style.display = 'block';
-                createBtn.style.display = 'inline-block';
-                
-                // Hide all conditional fields first
-                const descriptionField = document.getElementById('descriptionField');
-                const symlinkTargetField = document.getElementById('symlinkTargetField');
-                const tagsField = document.getElementById('tagsField');
-                
-                if (descriptionField) descriptionField.style.display = 'none';
-                if (symlinkTargetField) symlinkTargetField.style.display = 'none';
-                if (tagsField) tagsField.style.display = 'none';
-                
-                // Show appropriate fields based on type
-                if (type === 'document') {
-                    if (descriptionField) descriptionField.style.display = 'block';
-                    if (tagsField) tagsField.style.display = 'block';
-                } else if (type === 'symlink') {
-                    if (symlinkTargetField) symlinkTargetField.style.display = 'block';
-                } else if (type === 'folder') {
-                    // Folders don't need additional fields
-                }
-                
-                // Update visual selection
-                createOptions.forEach(opt => opt.classList.remove('border-primary'));
-                option.classList.add('border-primary');
-            });
-        });
-
         // Reset create modal when closed
         const createModal = document.getElementById('createModal');
         if (createModal) {
             createModal.addEventListener('hidden.bs.modal', () => {
-                createForm.style.display = 'none';
-                createBtn.style.display = 'none';
+                const createForm = document.getElementById('createForm');
+                const createBtn = document.getElementById('createBtn');
+                const createOptions = document.querySelectorAll('.create-option');
+                
+                if (createForm) createForm.style.display = 'none';
+                if (createBtn) createBtn.style.display = 'none';
                 document.getElementById('newItemForm')?.reset();
                 createOptions.forEach(opt => opt.classList.remove('border-primary'));
             });
@@ -1620,14 +1583,27 @@ function createItem() {
     console.log('🎯 === GLOBAL createItem() CALLED ===');
     console.log('⏰ Timestamp:', new Date().toISOString());
     console.log('🔍 Checking bdpaDrive instance...');
+    console.log('🌐 window.bdpaDrive exists:', !!window.bdpaDrive);
+    console.log('🌐 typeof window.bdpaDrive:', typeof window.bdpaDrive);
     
     if (window.bdpaDrive) {
         console.log('✅ bdpaDrive instance found');
-        console.log('🚀 Calling bdpaDrive.createItem()...');
-        bdpaDrive.createItem();
+        console.log('� bdpaDrive.createItem exists:', !!window.bdpaDrive.createItem);
+        console.log('🔍 typeof bdpaDrive.createItem:', typeof window.bdpaDrive.createItem);
+        console.log('�🚀 Calling bdpaDrive.createItem()...');
+        
+        try {
+            const result = bdpaDrive.createItem();
+            console.log('✅ bdpaDrive.createItem() call completed');
+            console.log('📋 Result:', result);
+        } catch (error) {
+            console.error('💥 Error calling bdpaDrive.createItem():', error);
+            console.error('📍 Error stack:', error.stack);
+        }
     } else {
         console.error('❌ CRITICAL: bdpaDrive instance not found');
-        console.error('Available on window:', Object.keys(window).filter(key => key.includes('bdpa')));
+        console.error('🔍 Available window properties:', Object.keys(window).filter(key => key.includes('bdpa') || key.includes('Drive')));
+        console.error('🔍 All window properties:', Object.keys(window));
     }
     
     console.log('📝 Global createItem() execution complete');

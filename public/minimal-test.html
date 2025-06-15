@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minimal Test - No App.js</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container mt-4">
+        <h1>Minimal Test</h1>
+        <p>This page loads without app.js to test basic functionality.</p>
+        
+        <div class="row">
+            <div class="col-md-6">
+                <h4>Auth Test</h4>
+                <button class="btn btn-primary" onclick="testAuth()">Check Auth</button>
+                <div id="authResult" class="mt-2"></div>
+            </div>
+            
+            <div class="col-md-6">
+                <h4>API Test</h4>
+                <button class="btn btn-success" onclick="testAPI()">Test Folder API</button>
+                <div id="apiResult" class="mt-2"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function testAuth() {
+            const result = document.getElementById('authResult');
+            result.innerHTML = 'Checking...';
+            
+            try {
+                const response = await fetch('/api/user/me');
+                const data = await response.json();
+                
+                if (data.username) {
+                    result.innerHTML = `<div class="alert alert-success">✅ Logged in as: ${data.username}</div>`;
+                } else {
+                    result.innerHTML = `<div class="alert alert-warning">⚠️ Not logged in</div>`;
+                }
+            } catch (error) {
+                result.innerHTML = `<div class="alert alert-danger">❌ Error: ${error.message}</div>`;
+            }
+        }
+        
+        async function testAPI() {
+            const result = document.getElementById('apiResult');
+            result.innerHTML = 'Testing API...';
+            
+            try {
+                // First check auth
+                const authResponse = await fetch('/api/user/me');
+                const userData = await authResponse.json();
+                
+                if (!userData.username) {
+                    result.innerHTML = `<div class="alert alert-warning">⚠️ Please log in first</div>`;
+                    return;
+                }
+                
+                // Test folder creation
+                const folderData = {
+                    name: 'test-minimal-' + Date.now(),
+                    isDirectory: true,
+                    type: 'folder'
+                };
+                
+                const createResponse = await fetch(`/api/v1/filesystem/${userData.username}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(folderData)
+                });
+                
+                const createResult = await createResponse.json();
+                
+                if (createResponse.ok) {
+                    result.innerHTML = `<div class="alert alert-success">✅ Folder created: ${createResult.node.name}</div>`;
+                } else {
+                    result.innerHTML = `<div class="alert alert-danger">❌ API Error: ${createResult.error}</div>`;
+                }
+            } catch (error) {
+                result.innerHTML = `<div class="alert alert-danger">❌ Error: ${error.message}</div>`;
+            }
+        }
+        
+        console.log('Minimal test page loaded');
+    </script>
+</body>
+</html>

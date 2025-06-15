@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple Create Button Test</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .console-output {
+            background: #1e1e1e;
+            color: #ffffff;
+            font-family: 'Courier New', monospace;
+            padding: 1rem;
+            border-radius: 0.375rem;
+            height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            font-size: 0.85rem;
+        }
+        .create-option {
+            cursor: pointer;
+            border: 2px solid #ddd;
+            transition: all 0.2s;
+        }
+        .create-option:hover {
+            border-color: #0d6efd;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-4">
+        <h1>Simple Create Button Test</h1>
+        
+        <div class="row">
+            <div class="col-md-6">
+                <h4>Status Check</h4>
+                <button class="btn btn-info mb-3" onclick="checkStatus()">Check System Status</button>
+                <div id="statusOutput" class="mb-3"></div>
+                
+                <h4>Test Create Button</h4>
+                <div class="card text-center create-option" data-type="folder" style="width: 200px; padding: 20px;">
+                    <h6>📁 Click to Create Folder</h6>
+                </div>
+            </div>
+            
+            <div class="col-md-6">
+                <h4>Console Output</h4>
+                <div id="consoleOutput" class="console-output"></div>
+                <button class="btn btn-sm btn-secondary mt-2" onclick="clearLog()">Clear</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Simple logging without intercepting console
+        function addLog(message) {
+            const output = document.getElementById('consoleOutput');
+            const timestamp = new Date().toLocaleTimeString();
+            output.textContent += `[${timestamp}] ${message}\n`;
+            output.scrollTop = output.scrollHeight;
+        }
+        
+        function clearLog() {
+            document.getElementById('consoleOutput').textContent = '';
+        }
+        
+        function checkStatus() {
+            addLog('🔍 Checking system status...');
+            const statusDiv = document.getElementById('statusOutput');
+            
+            // Check if main script loaded
+            const scriptExists = document.querySelector('script[src="/js/app.js"]');
+            addLog(`📄 app.js script tag: ${scriptExists ? 'Found' : 'Missing'}`);
+            
+            // Check global objects
+            addLog(`🌐 window.bdpaDrive: ${typeof window.bdpaDrive}`);
+            addLog(`🌐 window.createItem: ${typeof window.createItem}`);
+            addLog(`🌐 window.BDPADrive: ${typeof window.BDPADrive}`);
+            
+            // Test authentication
+            fetch('/api/user/me')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.username) {
+                        addLog(`✅ Authenticated as: ${data.username}`);
+                        statusDiv.innerHTML = `<div class="alert alert-success">✅ Logged in as: ${data.username}</div>`;
+                    } else {
+                        addLog('❌ Not authenticated');
+                        statusDiv.innerHTML = `<div class="alert alert-warning">⚠️ Not logged in - go to <a href="/auth">/auth</a></div>`;
+                    }
+                })
+                .catch(error => {
+                    addLog(`❌ Auth check failed: ${error.message}`);
+                    statusDiv.innerHTML = `<div class="alert alert-danger">❌ Error: ${error.message}</div>`;
+                });
+        }
+        
+        // Simple click detection
+        document.addEventListener('click', function(e) {
+            addLog(`🖱️ Click on: ${e.target.tagName}.${e.target.className}`);
+            
+            const createOption = e.target.closest('.create-option');
+            if (createOption) {
+                addLog('✅ Create option clicked!');
+                addLog(`📋 Data type: ${createOption.dataset.type}`);
+                
+                // Try to call showCreateForm if available
+                if (window.bdpaDrive && window.bdpaDrive.showCreateForm) {
+                    addLog('🚀 Calling showCreateForm...');
+                    try {
+                        window.bdpaDrive.showCreateForm(createOption.dataset.type);
+                        addLog('✅ showCreateForm called successfully');
+                    } catch (error) {
+                        addLog(`❌ showCreateForm error: ${error.message}`);
+                    }
+                } else {
+                    addLog('❌ showCreateForm not available');
+                }
+            }
+        });
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            addLog('🚀 Simple test page loaded');
+            
+            // Check status after a short delay
+            setTimeout(checkStatus, 1000);
+        });
+        
+        // Error handling
+        window.addEventListener('error', function(e) {
+            addLog(`💥 JavaScript Error: ${e.message}`);
+            addLog(`📁 File: ${e.filename}:${e.lineno}`);
+        });
+    </script>
+    
+    <!-- Load app.js at the end -->
+    <script src="/js/app.js"></script>
+</body>
+</html>
