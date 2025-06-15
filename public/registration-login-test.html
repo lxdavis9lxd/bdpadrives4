@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BDPADrive Registration & Login Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+        .container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        .success { color: green; font-weight: bold; }
+        .error { color: red; font-weight: bold; }
+        .info { color: blue; }
+        .warning { color: orange; }
+        button { margin: 5px; padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        input, textarea { margin: 5px; padding: 8px; border: 1px solid #ddd; border-radius: 4px; width: 200px; }
+        pre { background: #f8f9fa; padding: 10px; overflow-x: auto; border-radius: 4px; border: 1px solid #e9ecef; }
+        .step { background: #e7f3ff; padding: 10px; margin: 10px 0; border-left: 4px solid #007bff; }
+        .result { margin-top: 10px; padding: 10px; border-radius: 4px; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 BDPADrive Registration & Login Test</h1>
+        <p><strong>API Base URL:</strong> https://private-anon-38123c6eda-hsccebun98j2.apiary-mock.com/v1</p>
+        <p><strong>Fixed API Key:</strong> aaa96136-492f-4435-8177-714d8d64cf93</p>
+        
+        <div class="test-section">
+            <h3>🔧 Prerequisites Check</h3>
+            <button onclick="checkPrerequisites()">Check Prerequisites</button>
+            <div id="prerequisitesResult"></div>
+        </div>
+        
+        <div class="test-section">
+            <h3>1️⃣ Test User Registration</h3>
+            <div class="step">
+                <strong>Step 1:</strong> Enter user details and click "Test Registration"
+            </div>
+            <div>
+                <input type="text" id="regName" placeholder="Full Name" value="Test User">
+                <input type="email" id="regEmail" placeholder="Email" value="testuser@example.com">
+                <input type="password" id="regPassword" placeholder="Password" value="testpass123">
+                <button onclick="testRegistration()">Test Registration</button>
+            </div>
+            <div id="registrationResult"></div>
+        </div>
+        
+        <div class="test-section">
+            <h3>2️⃣ Test User Login</h3>
+            <div class="step">
+                <strong>Step 2:</strong> Use the same credentials to test login
+            </div>
+            <div>
+                <input type="email" id="loginEmail" placeholder="Email" value="testuser@example.com">
+                <input type="password" id="loginPassword" placeholder="Password" value="testpass123">
+                <button onclick="testLogin()">Test Login</button>
+            </div>
+            <div id="loginResult"></div>
+        </div>
+        
+        <div class="test-section">
+            <h3>3️⃣ Test Authenticated Operations</h3>
+            <div class="step">
+                <strong>Step 3:</strong> Test creating a folder with the authenticated user
+            </div>
+            <div>
+                <input type="text" id="folderName" placeholder="Folder Name" value="Test Folder">
+                <button onclick="testCreateFolder()" id="createFolderBtn" disabled>Create Test Folder</button>
+            </div>
+            <div id="folderResult"></div>
+        </div>
+        
+        <div class="test-section">
+            <h3>4️⃣ Test Session Integration</h3>
+            <div class="step">
+                <strong>Step 4:</strong> Test local session creation and dashboard access
+            </div>
+            <div>
+                <button onclick="testSessionLogin()">Test Session Login</button>
+                <button onclick="checkSession()">Check Session Status</button>
+                <button onclick="testDashboardAccess()">Test Dashboard Access</button>
+            </div>
+            <div id="sessionResult"></div>
+        </div>
+        
+        <div class="test-section">
+            <h3>📊 Test Results Summary</h3>
+            <div id="summaryResult">Run tests to see results...</div>
+        </div>
+    </div>
+
+    <script>
+        // Copy authentication functions from app.js
+        const API_BASE_URL = 'https://private-anon-38123c6eda-hsccebun98j2.apiary-mock.com/v1';
+        
+        async function generateSalt() {
+            const array = new Uint8Array(16);
+            crypto.getRandomValues(array);
+            return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
+        }
+
+        async function deriveKey(password, salt) {
+            const encoder = new TextEncoder();
+            const keyMaterial = await crypto.subtle.importKey(
+                'raw',
+                encoder.encode(password),
+                { name: 'PBKDF2' },
+                false,
+                ['deriveBits']
+            );
+            
+            const saltBytes = new Uint8Array(salt.match(/.{2}/g).map(byte => parseInt(byte, 16)));
+            
+            const derivedBits = await crypto.subtle.deriveBits(
+                {
+                    name: 'PBKDF2',
+                    salt: saltBytes,
+                    iterations: 100000,
+                    hash: 'SHA-256'
+                },
+                keyMaterial,
+                512
+            );
+            
+            const keyArray = new Uint8Array(derivedBits);
+            return Array.from(keyArray, byte => byte.toString(16).padStart(2, '0')).join('');
+        }
+
+        function makeAuthenticatedRequest(url, options = {}) {
+            const headers = {
+                'Content-Type': 'application/json',
+                ...options.headers
+            };
+            
+            headers['X-API-Key'] = 'aaa96136-492f-4435-8177-714d8d64cf93';
+            
+            return fetch(url, {
+                ...options,
+                headers
+            });
+        }
+
+        let currentUser = null;
+        let testResults = {
+            prerequisites: false,
+            registration: false,
+            login: false,
+            folder: false,
+            session: false
+        };
+
+        async function checkPrerequisites() {
+            const result = document.getElementById('prerequisitesResult');
+            result.innerHTML = '<div class="info">Checking prerequisites...</div>';
+            
+            try {
+                // Test 1: External API connectivity
+                const apiResponse = await makeAuthenticatedRequest(`${API_BASE_URL}/users`);
+                const apiWorking = apiResponse.status === 200 || apiResponse.status === 405;
+                
+                // Test 2: Local server connectivity
+                const localResponse = await fetch('/api/user/me');
+                const localWorking = localResponse.status !== 0;
+                
+                // Test 3: Crypto API availability
+                const cryptoWorking = typeof crypto !== 'undefined' && typeof crypto.subtle !== 'undefined';
+                
+                let html = '<h4>Prerequisites Check Results:</h4><ul>';
+                html += `<li>${apiWorking ? '✅' : '❌'} External API connectivity</li>`;
+                html += `<li>${localWorking ? '✅' : '❌'} Local server connectivity</li>`;
+                html += `<li>${cryptoWorking ? '✅' : '❌'} Web Crypto API availability</li>`;
+                html += '</ul>';
+                
+                if (apiWorking && localWorking && cryptoWorking) {
+                    html += '<div class="success">All prerequisites met! Ready to test.</div>';
+                    testResults.prerequisites = true;
+                } else {
+                    html += '<div class="error">Some prerequisites failed. Check the issues above.</div>';
+                }
+                
+                result.innerHTML = html;
+                updateSummary();
+                
+            } catch (error) {
+                result.innerHTML = `<div class="error">Prerequisites check failed: ${error.message}</div>`;
+            }
+        }
+
+        async function testRegistration() {
+            const result = document.getElementById('registrationResult');
+            const name = document.getElementById('regName').value;
+            const email = document.getElementById('regEmail').value;
+            const password = document.getElementById('regPassword').value;
+            
+            if (!name || !email || !password) {
+                result.innerHTML = '<div class="error">Please fill in all fields</div>';
+                return;
+            }
+            
+            result.innerHTML = '<div class="info">Testing registration...</div>';
+            
+            try {
+                const username = email.split('@')[0].toLowerCase();
+                const salt = await generateSalt();
+                const key = await deriveKey(password, salt);
+                
+                const response = await makeAuthenticatedRequest(`${API_BASE_URL}/users`, {
+                    method: 'POST',
+                    body: JSON.stringify({ 
+                        username,
+                        email, 
+                        salt,
+                        key
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    currentUser = { username, email, salt, key };
+                    result.innerHTML = `
+                        <div class="success">✅ Registration successful!</div>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                        <div class="info">User credentials stored for login test.</div>
+                    `;
+                    testResults.registration = true;
+                    document.getElementById('createFolderBtn').disabled = false;
+                } else {
+                    result.innerHTML = `
+                        <div class="error">❌ Registration failed!</div>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                    `;
+                }
+                
+                updateSummary();
+                
+            } catch (error) {
+                result.innerHTML = `<div class="error">Registration error: ${error.message}</div>`;
+            }
+        }
+
+        async function testLogin() {
+            const result = document.getElementById('loginResult');
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+            
+            if (!email || !password) {
+                result.innerHTML = '<div class="error">Please fill in email and password</div>';
+                return;
+            }
+            
+            result.innerHTML = '<div class="info">Testing login...</div>';
+            
+            try {
+                const username = email.split('@')[0].toLowerCase();
+                
+                // Get user info to retrieve salt
+                const userResponse = await fetch(`${API_BASE_URL}/users/${username}`);
+                if (!userResponse.ok) {
+                    result.innerHTML = '<div class="error">❌ User not found. Try registration first.</div>';
+                    return;
+                }
+                
+                const userData = await userResponse.json();
+                if (!userData.success || !userData.user.salt) {
+                    result.innerHTML = '<div class="error">❌ User authentication data not found</div>';
+                    return;
+                }
+                
+                // Derive key using stored salt
+                const key = await deriveKey(password, userData.user.salt);
+                
+                // Authenticate with derived key
+                const authResponse = await makeAuthenticatedRequest(`${API_BASE_URL}/users/${username}/auth`, {
+                    method: 'POST',
+                    body: JSON.stringify({ key })
+                });
+
+                const authData = await authResponse.json();
+                
+                if (authResponse.ok && authData.success) {
+                    currentUser = { 
+                        username, 
+                        email, 
+                        salt: userData.user.salt, 
+                        key,
+                        id: userData.user.user_id 
+                    };
+                    result.innerHTML = `
+                        <div class="success">✅ Login successful!</div>
+                        <pre>${JSON.stringify(authData, null, 2)}</pre>
+                        <div class="info">Authentication successful with PBKDF2.</div>
+                    `;
+                    testResults.login = true;
+                    document.getElementById('createFolderBtn').disabled = false;
+                } else {
+                    result.innerHTML = `
+                        <div class="error">❌ Login failed!</div>
+                        <pre>${JSON.stringify(authData, null, 2)}</pre>
+                    `;
+                }
+                
+                updateSummary();
+                
+            } catch (error) {
+                result.innerHTML = `<div class="error">Login error: ${error.message}</div>`;
+            }
+        }
+
+        async function testCreateFolder() {
+            const result = document.getElementById('folderResult');
+            const folderName = document.getElementById('folderName').value;
+            
+            if (!currentUser) {
+                result.innerHTML = '<div class="error">Please login first</div>';
+                return;
+            }
+            
+            if (!folderName) {
+                result.innerHTML = '<div class="error">Please enter a folder name</div>';
+                return;
+            }
+            
+            result.innerHTML = '<div class="info">Creating test folder...</div>';
+            
+            try {
+                const response = await makeAuthenticatedRequest(`${API_BASE_URL}/filesystem/${currentUser.username}`, {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        name: folderName + '-' + Date.now(),
+                        isDirectory: true,
+                        type: 'folder'
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    result.innerHTML = `
+                        <div class="success">✅ Folder created successfully!</div>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                        <div class="info">Authenticated API call successful.</div>
+                    `;
+                    testResults.folder = true;
+                } else {
+                    result.innerHTML = `
+                        <div class="error">❌ Folder creation failed!</div>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                    `;
+                }
+                
+                updateSummary();
+                
+            } catch (error) {
+                result.innerHTML = `<div class="error">Folder creation error: ${error.message}</div>`;
+            }
+        }
+
+        async function testSessionLogin() {
+            const result = document.getElementById('sessionResult');
+            
+            if (!currentUser) {
+                result.innerHTML = '<div class="error">Please complete external API login first</div>';
+                return;
+            }
+            
+            result.innerHTML = '<div class="info">Testing session login...</div>';
+            
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ 
+                        email: currentUser.email, 
+                        password: 'testpass123' // Using test password
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    result.innerHTML = `
+                        <div class="success">✅ Session login successful!</div>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                    `;
+                    testResults.session = true;
+                } else {
+                    result.innerHTML = `
+                        <div class="warning">⚠️ Session login failed (expected for mock data)</div>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                        <div class="info">This is normal since we're using test data.</div>
+                    `;
+                }
+                
+                updateSummary();
+                
+            } catch (error) {
+                result.innerHTML = `<div class="error">Session login error: ${error.message}</div>`;
+            }
+        }
+
+        async function checkSession() {
+            const result = document.getElementById('sessionResult');
+            
+            try {
+                const response = await fetch('/api/user/me');
+                const data = await response.json();
+                
+                const sessionInfo = document.createElement('div');
+                sessionInfo.innerHTML = `
+                    <h5>Current Session Status:</h5>
+                    <pre>${JSON.stringify(data, null, 2)}</pre>
+                `;
+                result.appendChild(sessionInfo);
+                
+            } catch (error) {
+                result.innerHTML += `<div class="error">Session check error: ${error.message}</div>`;
+            }
+        }
+
+        async function testDashboardAccess() {
+            try {
+                window.open('/dashboard', '_blank');
+            } catch (error) {
+                console.error('Dashboard access error:', error);
+            }
+        }
+
+        function updateSummary() {
+            const summary = document.getElementById('summaryResult');
+            const total = Object.keys(testResults).length;
+            const passed = Object.values(testResults).filter(Boolean).length;
+            
+            let html = `<h4>Test Results: ${passed}/${total} Passed</h4><ul>`;
+            html += `<li>${testResults.prerequisites ? '✅' : '❌'} Prerequisites Check</li>`;
+            html += `<li>${testResults.registration ? '✅' : '❌'} User Registration</li>`;
+            html += `<li>${testResults.login ? '✅' : '❌'} User Login</li>`;
+            html += `<li>${testResults.folder ? '✅' : '❌'} Authenticated Operations</li>`;
+            html += `<li>${testResults.session ? '✅' : '❌'} Session Integration</li>`;
+            html += '</ul>';
+            
+            if (passed === total) {
+                html += '<div class="success">🎉 All tests passed! Authentication is working correctly.</div>';
+            } else {
+                html += '<div class="info">Continue testing to complete all checks.</div>';
+            }
+            
+            summary.innerHTML = html;
+        }
+
+        // Initialize
+        updateSummary();
+    </script>
+</body>
+</html>

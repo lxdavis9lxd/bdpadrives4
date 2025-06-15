@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quick Registration Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .result { margin: 10px 0; padding: 10px; border-radius: 4px; }
+        .success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .info { background: #cce7ff; color: #004085; border: 1px solid #b3d4fc; }
+        button { padding: 10px 20px; margin: 5px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        pre { background: #f8f9fa; padding: 10px; border-radius: 4px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>Quick Registration & Login Test</h1>
+    
+    <div>
+        <button onclick="testRegistration()">Test Registration</button>
+        <button onclick="testLogin()">Test Login</button>
+        <button onclick="testAPI()">Test API Access</button>
+        <button onclick="clearResults()">Clear Results</button>
+    </div>
+    
+    <div id="results"></div>
+
+    <script>
+        const API_BASE_URL = 'https://private-anon-38123c6eda-hsccebun98j2.apiary-mock.com/v1';
+
+        function addResult(type, title, content) {
+            const results = document.getElementById('results');
+            const div = document.createElement('div');
+            div.className = `result ${type}`;
+            div.innerHTML = `<h4>${title}</h4>${content}`;
+            results.appendChild(div);
+        }
+
+        function clearResults() {
+            document.getElementById('results').innerHTML = '';
+        }
+
+        async function generateSalt() {
+            const array = new Uint8Array(16);
+            crypto.getRandomValues(array);
+            return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
+        }
+
+        async function deriveKey(password, salt) {
+            const encoder = new TextEncoder();
+            const keyMaterial = await crypto.subtle.importKey(
+                'raw',
+                encoder.encode(password),
+                { name: 'PBKDF2' },
+                false,
+                ['deriveBits']
+            );
+            
+            const saltBytes = new Uint8Array(salt.match(/.{2}/g).map(byte => parseInt(byte, 16)));
+            
+            const derivedBits = await crypto.subtle.deriveBits(
+                {
+                    name: 'PBKDF2',
+                    salt: saltBytes,
+                    iterations: 100000,
+                    hash: 'SHA-256'
+                },
+                keyMaterial,
+                512
+            );
+            
+            const keyArray = new Uint8Array(derivedBits);
+            return Array.from(keyArray, byte => byte.toString(16).padStart(2, '0')).join('');
+        }
+
+        function makeAuthenticatedRequest(url, options = {}) {
+            const headers = {
+                'Content-Type': 'application/json',
+                ...options.headers
+            };
+            
+            headers['X-API-Key'] = 'aaa96136-492f-4435-8177-714d8d64cf93';
+            
+            return fetch(url, {
+                ...options,
+                headers
+            });
+        }
+
+        let testUser = null;
+
+        async function testRegistration() {
+            addResult('info', 'Testing Registration', 'Starting registration test...');
+            
+            try {
+                const email = 'quicktest@example.com';
+                const username = email.split('@')[0];
+                const password = 'quicktest123';
+                const salt = await generateSalt();
+                const key = await deriveKey(password, salt);
+                
+                addResult('info', 'Generated Credentials', `
+                    <pre>Email: ${email}
+Username: ${username}
+Password: ${password}
+Salt: ${salt}
+Key: ${key.substring(0, 32)}...</pre>
+                `);
+                
+                const response = await makeAuthenticatedRequest(`${API_BASE_URL}/users`, {
+                    method: 'POST',
+                    body: JSON.stringify({ username, email, salt, key })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    testUser = { username, email, salt, key };
+                    addResult('success', 'Registration Successful', `<pre>${JSON.stringify(data, null, 2)}</pre>`);
+                } else {
+                    addResult('error', 'Registration Failed', `<pre>Status: ${response.status}
+${JSON.stringify(data, null, 2)}</pre>`);
+                }
+                
+            } catch (error) {
+                addResult('error', 'Registration Error', `${error.message}`);
+            }
+        }
+
+        async function testLogin() {
+            if (!testUser) {
+                addResult('error', 'Login Test', 'Please run registration test first');
+                return;
+            }
+            
+            addResult('info', 'Testing Login', 'Starting login test...');
+            
+            try {
+                // Get user info to retrieve salt
+                const userResponse = await fetch(`${API_BASE_URL}/users/${testUser.username}`);
+                const userData = await userResponse.json();
+                
+                if (!userResponse.ok) {
+                    addResult('error', 'User Lookup Failed', `<pre>${JSON.stringify(userData, null, 2)}</pre>`);
+                    return;
+                }
+                
+                addResult('info', 'User Data Retrieved', `<pre>${JSON.stringify(userData, null, 2)}</pre>`);
+                
+                // Authenticate with key
+                const authResponse = await makeAuthenticatedRequest(`${API_BASE_URL}/users/${testUser.username}/auth`, {
+                    method: 'POST',
+                    body: JSON.stringify({ key: testUser.key })
+                });
+                
+                const authData = await authResponse.json();
+                
+                if (authResponse.ok && authData.success) {
+                    addResult('success', 'Login Successful', `<pre>${JSON.stringify(authData, null, 2)}</pre>`);
+                } else {
+                    addResult('error', 'Login Failed', `<pre>Status: ${authResponse.status}
+${JSON.stringify(authData, null, 2)}</pre>`);
+                }
+                
+            } catch (error) {
+                addResult('error', 'Login Error', `${error.message}`);
+            }
+        }
+
+        async function testAPI() {
+            if (!testUser) {
+                addResult('error', 'API Test', 'Please run registration test first');
+                return;
+            }
+            
+            addResult('info', 'Testing API Access', 'Creating test folder...');
+            
+            try {
+                const response = await makeAuthenticatedRequest(`${API_BASE_URL}/filesystem/${testUser.username}`, {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        name: `test-folder-${Date.now()}`,
+                        isDirectory: true,
+                        type: 'folder'
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    addResult('success', 'API Test Successful', `<pre>${JSON.stringify(data, null, 2)}</pre>`);
+                } else {
+                    addResult('error', 'API Test Failed', `<pre>Status: ${response.status}
+${JSON.stringify(data, null, 2)}</pre>`);
+                }
+                
+            } catch (error) {
+                addResult('error', 'API Test Error', `${error.message}`);
+            }
+        }
+
+        // Test API connectivity on load
+        window.addEventListener('load', async () => {
+            try {
+                const response = await makeAuthenticatedRequest(`${API_BASE_URL}/users`);
+                const status = response.status;
+                
+                if (status === 200 || status === 405) {
+                    addResult('success', 'API Connectivity', `External API is accessible (HTTP ${status})`);
+                } else {
+                    addResult('error', 'API Connectivity', `External API returned HTTP ${status}`);
+                }
+            } catch (error) {
+                addResult('error', 'API Connectivity', `Failed to connect: ${error.message}`);
+            }
+        });
+    </script>
+</body>
+</html>

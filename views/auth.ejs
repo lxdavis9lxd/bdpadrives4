@@ -132,9 +132,34 @@
                                     </button>
                                 </form>
                                 
+                                <!-- Test Account Information -->
+                                <div class="mt-4 p-3 bg-info bg-opacity-10 border border-info rounded">
+                                    <h6 class="text-info mb-3">
+                                        <i class="bi bi-flask me-2"></i>Test Account (External API)
+                                    </h6>
+                                    <div class="row">
+                                        <div class="col-12 mb-3">
+                                            <div class="d-flex justify-content-between align-items-center bg-white p-2 rounded border">
+                                                <div>
+                                                    <strong>Email:</strong> testuser@example.com<br>
+                                                    <strong>Password:</strong> testpass123
+                                                </div>
+                                                <button class="btn btn-info btn-sm" onclick="fillTestCredentials()">
+                                                    <i class="bi bi-clipboard me-1"></i>Use Test Account
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <small class="text-muted">
+                                        <i class="bi bi-info-circle me-1"></i>
+                                        This test account uses PBKDF2 authentication with the external API. 
+                                        First register this account, then use it to login.
+                                    </small>
+                                </div>
+                                
                                 <!-- Demo Accounts -->
-                                <div class="mt-4 p-3 bg-light rounded">
-                                    <h6 class="text-muted mb-2">Demo Accounts:</h6>
+                                <div class="mt-3 p-3 bg-light rounded">
+                                    <h6 class="text-muted mb-2">Local Demo Accounts:</h6>
                                     <div class="row">
                                         <div class="col-sm-6">
                                             <small class="text-muted">
@@ -254,6 +279,29 @@
                                         <i class="bi bi-person-plus me-2"></i>Create Account
                                     </button>
                                 </form>
+                                
+                                <!-- Test Account Helper -->
+                                <div class="mt-4 p-3 bg-success bg-opacity-10 border border-success rounded">
+                                    <h6 class="text-success mb-3">
+                                        <i class="bi bi-flask me-2"></i>Quick Test Registration
+                                    </h6>
+                                    <div class="d-flex justify-content-between align-items-center bg-white p-2 rounded border">
+                                        <div>
+                                            <small>
+                                                <strong>Name:</strong> Test User<br>
+                                                <strong>Email:</strong> testuser@example.com<br>
+                                                <strong>Password:</strong> testpass123
+                                            </small>
+                                        </div>
+                                        <button class="btn btn-success btn-sm" onclick="fillSignupTestCredentials()">
+                                            <i class="bi bi-clipboard me-1"></i>Use for Signup
+                                        </button>
+                                    </div>
+                                    <small class="text-muted mt-2 d-block">
+                                        <i class="bi bi-info-circle me-1"></i>
+                                        This creates a test account for the external API with PBKDF2 authentication.
+                                    </small>
+                                </div>
                             </div>
                             
                             <!-- Forgot Password Form -->
@@ -392,3 +440,41 @@
         </div>
     </div>
 </div>
+
+<script>
+// Function to fill test credentials for signin
+function fillTestCredentials() {
+    document.getElementById('signinEmail').value = 'testuser@example.com';
+    document.getElementById('signinPassword').value = 'testpass123';
+    
+    // Add visual feedback
+    const button = event.target.closest('button');
+    const originalText = button.innerHTML;
+    button.innerHTML = '<i class="bi bi-check me-1"></i>Filled!';
+    button.className = 'btn btn-success btn-sm';
+    
+    setTimeout(() => {
+        button.innerHTML = originalText;
+        button.className = 'btn btn-info btn-sm';
+    }, 1500);
+}
+
+// Function to fill test credentials for signup
+function fillSignupTestCredentials() {
+    document.getElementById('signupName').value = 'Test User';
+    document.getElementById('signupEmail').value = 'testuser@example.com';
+    document.getElementById('signupPassword').value = 'testpass123';
+    document.getElementById('signupConfirmPassword').value = 'testpass123';
+    
+    // Add visual feedback
+    const button = event.target.closest('button');
+    const originalText = button.innerHTML;
+    button.innerHTML = '<i class="bi bi-check me-1"></i>Filled!';
+    button.className = 'btn btn-success btn-sm';
+    
+    setTimeout(() => {
+        button.innerHTML = originalText;
+        button.className = 'btn btn-success btn-sm';
+    }, 1500);
+}
+</script>
