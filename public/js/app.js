@@ -53,12 +53,22 @@ class BDPADrive {
                 console.log('✅ Create option found!');
                 console.log('📄 Target element:', createOption);
                 console.log('🏷️ Data type:', createOption.dataset.type);
+                console.log('🔍 this context:', this);
+                console.log('🔍 this.showCreateForm:', typeof this.showCreateForm);
                 
                 e.preventDefault();
                 e.stopPropagation();
                 const type = createOption.dataset.type;
                 console.log('🚀 Calling showCreateForm with type:', type);
-                this.showCreateForm(type);
+                
+                // Use the global bdpaDrive instance instead of this
+                if (window.bdpaDrive && typeof window.bdpaDrive.showCreateForm === 'function') {
+                    console.log('✅ Calling window.bdpaDrive.showCreateForm');
+                    window.bdpaDrive.showCreateForm(type);
+                } else {
+                    console.error('❌ window.bdpaDrive.showCreateForm not available');
+                    console.log('🔍 window.bdpaDrive:', window.bdpaDrive);
+                }
             } else {
                 // Only log if it's a relevant click (not every click on the page)
                 if (e.target.closest('.modal') || e.target.closest('.btn')) {
@@ -2028,9 +2038,11 @@ document.addEventListener('DOMContentLoaded', () => {
     console.log('🔧 Creating BDPADrive instance...');
     
     bdpaDrive = new BDPADrive();
+    window.bdpaDrive = bdpaDrive; // Ensure it's available globally
     
     console.log('✅ BDPADrive instance created successfully');
     console.log('🌐 bdpaDrive available on window:', typeof window.bdpaDrive);
+    console.log('🔍 window.bdpaDrive.showCreateForm:', typeof window.bdpaDrive.showCreateForm);
     
     // Load storage information for dashboard
     if (document.getElementById('storageUsed')) {
