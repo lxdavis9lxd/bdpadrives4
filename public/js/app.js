@@ -1,5 +1,58 @@
 // BDPADrive Frontend JavaScript
 
+// API Configuration
+const API_BASE_URL = 'https://private-anon-38123c6eda-hsccebun98j2.apiary-mock.com/v1';
+
+// PBKDF2 Authentication Helper Functions
+async function generateSalt() {
+    const array = new Uint8Array(16);
+    crypto.getRandomValues(array);
+    return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function deriveKey(password, salt) {
+    const encoder = new TextEncoder();
+    const keyMaterial = await crypto.subtle.importKey(
+        'raw',
+        encoder.encode(password),
+        { name: 'PBKDF2' },
+        false,
+        ['deriveBits']
+    );
+    
+    const saltBytes = new Uint8Array(salt.match(/.{2}/g).map(byte => parseInt(byte, 16)));
+    
+    const derivedBits = await crypto.subtle.deriveBits(
+        {
+            name: 'PBKDF2',
+            salt: saltBytes,
+            iterations: 100000,
+            hash: 'SHA-256'
+        },
+        keyMaterial,
+        512 // 64 bytes = 512 bits
+    );
+    
+    const keyArray = new Uint8Array(derivedBits);
+    return Array.from(keyArray, byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+// Helper function for making authenticated API requests
+function makeAuthenticatedRequest(url, options = {}) {
+    const headers = {
+        'Content-Type': 'application/json',
+        ...options.headers
+    };
+    
+    // Use the fixed API key for external API authentication
+    headers['X-API-Key'] = 'aaa96136-492f-4435-8177-714d8d64cf93';
+    
+    return fetch(url, {
+        ...options,
+        headers
+    });
+}
+
 class BDPADrive {
     constructor() {
         console.log('🏗️ === BDPADrive Constructor START ===');
@@ -212,7 +265,8 @@ class BDPADrive {
                 // Also try to get additional user info from v1 API
                 if (userData.username) {
                     try {
-                        const v1Response = await fetch(`/api/v1/users/${userData.username}`);
+                        // Use fixed API key for authentication
+                        const v1Response = await makeAuthenticatedRequest(`${API_BASE_URL}/users/${userData.username}`, {});
                         if (v1Response.ok) {
                             const v1Data = await v1Response.json();
                             this.currentUser = { ...userData, ...v1Data };
@@ -240,18 +294,64 @@ class BDPADrive {
         try {
             this.showLoading('signinSubmit', true);
             
-            const data = await this.apiCall('/api/auth/login', {
+            // Generate username from email
+            const username = email.split('@')[0].toLowerCase();
+            
+            // First, get user info to retrieve salt
+            const userResponse = await fetch(`${API_BASE_URL}/users/${username}`);
+            if (!userResponse.ok) {
+                this.showError('User not found');
+                return;
+            }
+            
+            const userData = await userResponse.json();
+            if (!userData.success || !userData.user.salt) {
+                this.showError('User authentication data not found');
+                return;
+            }
+            
+            // Derive key using stored salt for user authentication
+            const key = await deriveKey(password, userData.user.salt);
+            
+            console.log('🔐 Attempting authentication with PBKDF2:', { username, keyLength: key.length });
+            
+            // Authenticate with derived key (using fixed API key for API access)
+            const authResponse = await makeAuthenticatedRequest(`${API_BASE_URL}/users/${username}/auth`, {
                 method: 'POST',
-                body: JSON.stringify({ email, password })
-            }, false);
+                body: JSON.stringify({ key })
+            });
 
-            if (data.success) {
-                this.showSuccess('Sign in successful!');
-                setTimeout(() => {
-                    window.location.href = data.redirectUrl || '/dashboard';
-                }, 1000);
+            if (authResponse.ok) {
+                const authData = await authResponse.json();
+                if (authData.success) {
+                    this.showSuccess('Sign in successful!');
+                    
+                    // Store user credentials for API calls
+                    this.currentUser = { 
+                        username, 
+                        email, 
+                        salt: userData.user.salt, 
+                        key,
+                        id: userData.user.user_id 
+                    };
+                    
+                    // Also set local session for compatibility
+                    await fetch('/api/auth/login', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ email, password })
+                    });
+                    
+                    setTimeout(() => {
+                        window.location.href = '/dashboard';
+                    }, 1000);
+                } else {
+                    this.showError('Invalid credentials');
+                }
             } else {
-                this.showError(data.error || 'Sign in failed');
+                this.showError('Authentication failed');
             }
         } catch (error) {
             console.error('Sign in error:', error);
@@ -280,17 +380,20 @@ class BDPADrive {
             // Generate username from email (before @ symbol)
             const username = email.split('@')[0].toLowerCase();
             
-            // Use v1 API for user creation
-            const response = await fetch('/api/v1/users', {
+            // Generate salt and derive key using PBKDF2
+            const salt = await generateSalt();
+            const key = await deriveKey(password, salt);
+            
+            console.log('🔐 Generated PBKDF2 credentials:', { username, salt: salt.substring(0, 8) + '...', keyLength: key.length });
+            
+            // Use v1 API for user creation with PBKDF2 (using fixed API key for API access)
+            const response = await makeAuthenticatedRequest(`${API_BASE_URL}/users`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
                 body: JSON.stringify({ 
                     username,
                     email, 
-                    password,
-                    fullName: name
+                    salt,
+                    key
                 })
             });
 
@@ -299,29 +402,13 @@ class BDPADrive {
             if (response.ok) {
                 this.showToast('Account created successfully!', 'success');
                 
-                // Now authenticate the user
-                const authResponse = await fetch(`/api/v1/users/${username}/auth`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ password })
-                });
-
-                if (authResponse.ok) {
-                    // Set session using legacy endpoint for compatibility
-                    await fetch('/api/auth/login', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({ email, password })
-                    });
-                    
-                    setTimeout(() => {
-                        window.location.href = '/dashboard';
-                    }, 1000);
-                }
+                // Store credentials for potential authentication
+                this.currentUser = { username, email, salt, key };
+                
+                // Redirect to dashboard or show success
+                setTimeout(() => {
+                    window.location.href = '/dashboard';
+                }, 1000);
             } else {
                 this.showToast(data.error || 'Registration failed', 'error');
             }
@@ -548,14 +635,11 @@ class BDPADrive {
             console.log('📋 Final item data:', itemData);
 
             console.log('🌐 Making API call to create item...');
-            console.log('📍 API endpoint:', `/api/v1/filesystem/${userData.username}`);
+            console.log('📍 API endpoint:', `${API_BASE_URL}/filesystem/${userData.username}`);
             
             // Use v1 API to create file/folder
-            const response = await fetch(`/api/v1/filesystem/${userData.username}`, {
+            const response = await makeAuthenticatedRequest(`${API_BASE_URL}/filesystem/${userData.username}`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
                 body: JSON.stringify(itemData)
             });
 
@@ -710,7 +794,7 @@ class BDPADrive {
             }
 
             // Get all files for preview
-            const response = await fetch(`/api/v1/filesystem/${userData.username}`);
+            const response = await makeAuthenticatedRequest(`${API_BASE_URL}/filesystem/${userData.username}`);
             if (!response.ok) {
                 throw new Error('Failed to load files');
             }
@@ -796,10 +880,10 @@ class BDPADrive {
             }
 
             const url = path 
-                ? `/api/v1/filesystem/${userData.username}/${path}`
-                : `/api/v1/filesystem/${userData.username}`;
+                ? `${API_BASE_URL}/filesystem/${userData.username}/${path}`
+                : `${API_BASE_URL}/filesystem/${userData.username}`;
                 
-            const response = await fetch(url);
+            const response = await makeAuthenticatedRequest(url);
             
             if (response.ok) {
                 const data = await response.json();
@@ -824,7 +908,7 @@ class BDPADrive {
                 return false;
             }
 
-            const response = await fetch(`/api/v1/filesystem/${userData.username}/${fileName}`, {
+            const response = await makeAuthenticatedRequest(`${API_BASE_URL}/filesystem/${userData.username}/${fileName}`, {
                 method: 'DELETE'
             });
 
@@ -853,11 +937,8 @@ class BDPADrive {
                 return false;
             }
 
-            const response = await fetch(`/api/v1/filesystem/${userData.username}/${oldName}`, {
+            const response = await makeAuthenticatedRequest(`${API_BASE_URL}/filesystem/${userData.username}/${oldName}`, {
                 method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
                 body: JSON.stringify({ name: newName })
             });
 
@@ -893,7 +974,7 @@ class BDPADrive {
                 searchParams.append('match', query);
             }
 
-            const response = await fetch(`/api/v1/filesystem/${userData.username}/search?${searchParams}`);
+            const response = await makeAuthenticatedRequest(`${API_BASE_URL}/filesystem/${userData.username}/search?${searchParams}`);
             
             if (response.ok) {
                 const data = await response.json();
@@ -918,7 +999,7 @@ class BDPADrive {
                 return null;
             }
 
-            const response = await fetch(`/api/v1/filesystem/${userData.username}/${fileName}`);
+            const response = await makeAuthenticatedRequest(`${API_BASE_URL}/filesystem/${userData.username}/${fileName}`);
             
             if (response.ok) {
                 const data = await response.json();
@@ -943,11 +1024,8 @@ class BDPADrive {
                 return false;
             }
 
-            const response = await fetch(`/api/v1/filesystem/${userData.username}/${fileName}`, {
+            const response = await makeAuthenticatedRequest(`${API_BASE_URL}/filesystem/${userData.username}/${fileName}`, {
                 method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
                 body: JSON.stringify({ 
                     content: content,
                     mimeType: mimeType
@@ -1074,7 +1152,7 @@ class BDPADrive {
                 return null;
             }
 
-            const response = await fetch(`/api/v1/users/${userData.username}/storage`);
+            const response = await makeAuthenticatedRequest(`${API_BASE_URL}/users/${userData.username}/storage`);
             if (response.ok) {
                 const data = await response.json();
                 return data.storage;
@@ -1129,11 +1207,8 @@ class BDPADrive {
                 return;
             }
 
-            const response = await fetch(`/api/v1/users/${userData.username}`, {
+            const response = await makeAuthenticatedRequest(`${API_BASE_URL}/users/${userData.username}`, {
                 method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
                 body: JSON.stringify({ name, email })
             });
 
@@ -1202,13 +1277,11 @@ class BDPADrive {
                 return;
             }
 
-            // First verify current password
-            const authResponse = await fetch(`/api/v1/users/${userData.username}/auth`, {
+            // First verify current password using PBKDF2
+            const currentKey = await deriveKey(currentPassword, this.currentUser.salt);
+            const authResponse = await makeAuthenticatedRequest(`${API_BASE_URL}/users/${userData.username}/auth`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ password: currentPassword })
+                body: JSON.stringify({ key: currentKey })
             });
 
             if (!authResponse.ok) {
@@ -1217,17 +1290,22 @@ class BDPADrive {
                 return;
             }
 
-            // Update password
-            const response = await fetch(`/api/v1/users/${userData.username}`, {
+            // Generate new salt and key for new password
+            const newSalt = await generateSalt();
+            const newKey = await deriveKey(newPassword, newSalt);
+
+            // Update password with new salt and key
+            const response = await makeAuthenticatedRequest(`${API_BASE_URL}/users/${userData.username}`, {
                 method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ password: newPassword })
+                body: JSON.stringify({ salt: newSalt, key: newKey })
             });
 
             if (response.ok) {
                 this.showToast('Password changed successfully!', 'success');
+                
+                // Update stored credentials
+                this.currentUser.salt = newSalt;
+                this.currentUser.key = newKey;
                 
                 // Close modal and clear form
                 const modal = bootstrap.Modal.getInstance(document.getElementById('changePasswordModal'));
@@ -1263,7 +1341,7 @@ class BDPADrive {
                 return;
             }
 
-            const response = await fetch(`/api/v1/users/${userData.username}`, {
+            const response = await makeAuthenticatedRequest(`${API_BASE_URL}/users/${userData.username}`, {
                 method: 'DELETE'
             });
 
@@ -1690,7 +1768,7 @@ async function showItemPropertiesModal(type, id) {
         }
 
         // Get item details using v1 API
-        const response = await fetch(`/api/v1/filesystem/${userData.username}/${id}`);
+        const response = await makeAuthenticatedRequest(`${API_BASE_URL}/filesystem/${userData.username}/${id}`);
         if (!response.ok) {
             throw new Error('Failed to load item details');
         }
@@ -1806,11 +1884,8 @@ async function saveItemProperties() {
             updates.symlinkTarget = symlinkTargetInput.value.trim();
         }
 
-        const response = await fetch(`/api/v1/filesystem/${userData.username}/${bdpaDrive.currentItemProperties.id}`, {
+        const response = await makeAuthenticatedRequest(`${API_BASE_URL}/filesystem/${userData.username}/${bdpaDrive.currentItemProperties.id}`, {
             method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json'
-            },
             body: JSON.stringify(updates)
         });
 
@@ -1873,7 +1948,7 @@ async function bulkDelete() {
             let deletedCount = 0;
             for (const item of selectedItems) {
                 try {
-                    const response = await fetch(`/api/v1/filesystem/${userData.username}/${item.id}`, {
+                    const response = await makeAuthenticatedRequest(`${API_BASE_URL}/filesystem/${userData.username}/${item.id}`, {
                         method: 'DELETE'
                     });
                     if (response.ok) deletedCount++;
@@ -1920,11 +1995,8 @@ async function bulkChangeOwner() {
         let updatedCount = 0;
         for (const item of selectedItems) {
             try {
-                const response = await fetch(`/api/v1/filesystem/${userData.username}/${item.id}`, {
+                const response = await makeAuthenticatedRequest(`${API_BASE_URL}/filesystem/${userData.username}/${item.id}`, {
                     method: 'PUT',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
                     body: JSON.stringify({ owner: newOwner.trim() })
                 });
                 if (response.ok) updatedCount++;
@@ -1974,17 +2046,14 @@ async function bulkAddTags() {
         for (const item of selectedItems) {
             try {
                 // Get current file to merge tags
-                const getResponse = await fetch(`/api/v1/filesystem/${userData.username}/${item.id}`);
+                const getResponse = await makeAuthenticatedRequest(`${API_BASE_URL}/filesystem/${userData.username}/${item.id}`);
                 if (getResponse.ok) {
                     const fileData = await getResponse.json();
                     const currentTags = fileData.tags || [];
                     const mergedTags = [...new Set([...currentTags, ...tags])].slice(0, 5); // Dedupe and limit to 5
 
-                    const putResponse = await fetch(`/api/v1/filesystem/${userData.username}/${item.id}`, {
+                    const putResponse = await makeAuthenticatedRequest(`${API_BASE_URL}/filesystem/${userData.username}/${item.id}`, {
                         method: 'PUT',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
                         body: JSON.stringify({ tags: mergedTags })
                     });
                     if (putResponse.ok) updatedCount++;

@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PBKDF2 Authentication Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; }
+        .success { color: green; }
+        .error { color: red; }
+        .info { color: blue; }
+        button { margin: 5px; padding: 8px 16px; }
+        input { margin: 5px; padding: 5px; }
+        pre { background: #f5f5f5; padding: 10px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>PBKDF2 Authentication Test</h1>
+    
+    <div class="test-section">
+        <h3>Session Status</h3>
+        <button onclick="checkSession()">Check Session</button>
+        <div id="sessionStatus"></div>
+    </div>
+    
+    <div class="test-section">
+        <h3>Test Signup with PBKDF2</h3>
+        <input type="text" id="testUsername" placeholder="Username" value="testuser">
+        <input type="email" id="testEmail" placeholder="Email" value="test@example.com">
+        <input type="password" id="testPassword" placeholder="Password" value="testpass123">
+        <button onclick="testSignup()">Test Signup</button>
+        <div id="signupResult"></div>
+    </div>
+    
+    <div class="test-section">
+        <h3>Test Signin with PBKDF2</h3>
+        <input type="email" id="signinEmail" placeholder="Email" value="test@example.com">
+        <input type="password" id="signinPassword" placeholder="Password" value="testpass123">
+        <button onclick="testSignin()">Test Signin</button>
+        <div id="signinResult"></div>
+    </div>
+    
+    <div class="test-section">
+        <h3>Test External API Call</h3>
+        <button onclick="testAPICall()">Test Authenticated API Call</button>
+        <div id="apiResult"></div>
+    </div>
+    
+    <div class="test-section">
+        <h3>PBKDF2 Functions Test</h3>
+        <button onclick="testPBKDF2()">Test PBKDF2 Functions</button>
+        <div id="pbkdf2Result"></div>
+    </div>
+
+    <script>
+        // Copy PBKDF2 functions from app.js
+        const API_BASE_URL = 'https://private-anon-38123c6eda-hsccebun98j2.apiary-mock.com/v1';
+
+        async function generateSalt() {
+            const array = new Uint8Array(16);
+            crypto.getRandomValues(array);
+            return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
+        }
+
+        async function deriveKey(password, salt) {
+            const encoder = new TextEncoder();
+            const keyMaterial = await crypto.subtle.importKey(
+                'raw',
+                encoder.encode(password),
+                { name: 'PBKDF2' },
+                false,
+                ['deriveBits']
+            );
+            
+            const saltBytes = new Uint8Array(salt.match(/.{2}/g).map(byte => parseInt(byte, 16)));
+            
+            const derivedBits = await crypto.subtle.deriveBits(
+                {
+                    name: 'PBKDF2',
+                    salt: saltBytes,
+                    iterations: 100000,
+                    hash: 'SHA-256'
+                },
+                keyMaterial,
+                512 // 64 bytes = 512 bits
+            );
+            
+            const keyArray = new Uint8Array(derivedBits);
+            return Array.from(keyArray, byte => byte.toString(16).padStart(2, '0')).join('');
+        }
+
+        function makeAuthenticatedRequest(url, options = {}) {
+            const headers = {
+                'Content-Type': 'application/json',
+                ...options.headers
+            };
+            
+            // Use the fixed API key for external API authentication
+            headers['X-API-Key'] = 'aaa96136-492f-4435-8177-714d8d64cf93';
+            
+            return fetch(url, {
+                ...options,
+                headers
+            });
+        }
+
+        let currentUser = null;
+
+        async function checkSession() {
+            const result = document.getElementById('sessionStatus');
+            try {
+                const response = await fetch('/api/user/me');
+                const data = await response.json();
+                result.innerHTML = `<div class="info">Session: ${JSON.stringify(data, null, 2)}</div>`;
+            } catch (error) {
+                result.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+            }
+        }
+
+        async function testPBKDF2() {
+            const result = document.getElementById('pbkdf2Result');
+            try {
+                const password = 'testpassword';
+                const salt = await generateSalt();
+                const key = await deriveKey(password, salt);
+                
+                result.innerHTML = `
+                    <div class="success">PBKDF2 Test Success:</div>
+                    <pre>
+Password: ${password}
+Salt: ${salt}
+Key: ${key.substring(0, 20)}...
+Key Length: ${key.length} characters
+                    </pre>
+                `;
+            } catch (error) {
+                result.innerHTML = `<div class="error">PBKDF2 Error: ${error.message}</div>`;
+            }
+        }
+
+        async function testSignup() {
+            const result = document.getElementById('signupResult');
+            const username = document.getElementById('testUsername').value;
+            const email = document.getElementById('testEmail').value;
+            const password = document.getElementById('testPassword').value;
+            
+            try {
+                const salt = await generateSalt();
+                const key = await deriveKey(password, salt);
+                
+                const response = await fetch(`${API_BASE_URL}/users`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ 
+                        username,
+                        email, 
+                        salt,
+                        key
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    currentUser = { username, email, salt, key };
+                    result.innerHTML = `<div class="success">Signup Success: ${JSON.stringify(data, null, 2)}</div>`;
+                } else {
+                    result.innerHTML = `<div class="error">Signup Failed: ${JSON.stringify(data, null, 2)}</div>`;
+                }
+            } catch (error) {
+                result.innerHTML = `<div class="error">Signup Error: ${error.message}</div>`;
+            }
+        }
+
+        async function testSignin() {
+            const result = document.getElementById('signinResult');
+            const email = document.getElementById('signinEmail').value;
+            const password = document.getElementById('signinPassword').value;
+            
+            try {
+                const username = email.split('@')[0].toLowerCase();
+                
+                // Get user info to retrieve salt
+                const userResponse = await fetch(`${API_BASE_URL}/users/${username}`);
+                if (!userResponse.ok) {
+                    result.innerHTML = `<div class="error">User not found</div>`;
+                    return;
+                }
+                
+                const userData = await userResponse.json();
+                if (!userData.success || !userData.user.salt) {
+                    result.innerHTML = `<div class="error">User authentication data not found</div>`;
+                    return;
+                }
+                
+                // Derive key using stored salt
+                const key = await deriveKey(password, userData.user.salt);
+                
+                // Authenticate with derived key
+                const authResponse = await fetch(`${API_BASE_URL}/users/${username}/auth`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ key })
+                });
+
+                const authData = await authResponse.json();
+                
+                if (authResponse.ok && authData.success) {
+                    currentUser = { 
+                        username, 
+                        email, 
+                        salt: userData.user.salt, 
+                        key,
+                        id: userData.user.user_id 
+                    };
+                    result.innerHTML = `<div class="success">Signin Success: ${JSON.stringify(authData, null, 2)}</div>`;
+                } else {
+                    result.innerHTML = `<div class="error">Signin Failed: ${JSON.stringify(authData, null, 2)}</div>`;
+                }
+            } catch (error) {
+                result.innerHTML = `<div class="error">Signin Error: ${error.message}</div>`;
+            }
+        }
+
+        async function testAPICall() {
+            const result = document.getElementById('apiResult');
+            
+            if (!currentUser) {
+                result.innerHTML = `<div class="error">Please sign in first</div>`;
+                return;
+            }
+            
+            try {
+                // Test creating a folder
+                const response = await makeAuthenticatedRequest(`${API_BASE_URL}/filesystem/${currentUser.username}`, {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        name: 'test-folder-' + Date.now(),
+                        isDirectory: true,
+                        type: 'folder'
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    result.innerHTML = `<div class="success">API Call Success: ${JSON.stringify(data, null, 2)}</div>`;
+                } else {
+                    result.innerHTML = `<div class="error">API Call Failed: ${JSON.stringify(data, null, 2)}</div>`;
+                }
+            } catch (error) {
+                result.innerHTML = `<div class="error">API Call Error: ${error.message}</div>`;
+            }
+        }
+    </script>
+</body>
+</html>
